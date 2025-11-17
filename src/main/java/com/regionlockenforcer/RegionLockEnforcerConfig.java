@@ -74,5 +74,5 @@ public interface RegionLockEnforcerConfig extends Config
             description = "Tile width/height for the world map selection grid",
             position = 7
     )
-    default int worldMapGridSize() { return 64; }
+    default int worldMapGridSize() { return 4; }
 }
