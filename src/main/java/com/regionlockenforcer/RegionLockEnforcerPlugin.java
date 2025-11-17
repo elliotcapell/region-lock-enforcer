@@ -1,5 +1,6 @@
 package com.regionlockenforcer;
 
+import com.google.gson.Gson;
 import com.google.inject.Provides;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
@@ -63,6 +64,7 @@ public class RegionLockEnforcerPlugin extends Plugin
     @Inject private ClientToolbar clientToolbar;
     @Inject private RegionLockEnforcerPanel panel;
     @Inject private TeleportRegistry teleportRegistry;
+    @Inject private Gson gson;
 
     private NavigationButton navButton;
 
@@ -2377,10 +2379,9 @@ public class RegionLockEnforcerPlugin extends Plugin
      */
     public boolean exportBorderProfile(BorderProfile profile, String filePath)
     {
-        try
+        try (java.io.FileWriter writer = new java.io.FileWriter(filePath))
         {
-            java.io.FileWriter writer = new java.io.FileWriter(filePath);
-            com.google.gson.Gson gson = new com.google.gson.GsonBuilder().setPrettyPrinting().create();
+            Gson prettyGson = gson.newBuilder().setPrettyPrinting().create();
             
             // Create a serializable version of the profile
             BorderProfileExport exportData = new BorderProfileExport();
@@ -2395,8 +2396,7 @@ public class RegionLockEnforcerPlugin extends Plugin
                 ? new java.util.ArrayList<>(profile.getTeleportWhitelist())
                 : new java.util.ArrayList<>();
             
-            gson.toJson(exportData, writer);
-            writer.close();
+            prettyGson.toJson(exportData, writer);
             return true;
         }
         catch (Exception e)
@@ -2414,12 +2414,9 @@ public class RegionLockEnforcerPlugin extends Plugin
      */
     public BorderProfile importBorderProfile(String filePath)
     {
-        try
+        try (java.io.FileReader reader = new java.io.FileReader(filePath))
         {
-            java.io.FileReader reader = new java.io.FileReader(filePath);
-            com.google.gson.Gson gson = new com.google.gson.Gson();
             BorderProfileExport exportData = gson.fromJson(reader, BorderProfileExport.class);
-            reader.close();
             
             if (exportData == null || exportData.name == null) return null;
             
