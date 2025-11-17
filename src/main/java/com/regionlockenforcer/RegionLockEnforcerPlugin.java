@@ -46,8 +46,7 @@ import net.runelite.client.util.Text;
 @Slf4j
 @PluginDescriptor(
         name = "Region Lock Enforcer",
-        description = "Editor marks tiles (darken + west edge) and blocks clicks on them.",
-        enabledByDefault = false
+        description = "Editor marks tiles (darken + west edge) and blocks clicks on them."
 )
 @Singleton
 public class RegionLockEnforcerPlugin extends Plugin
