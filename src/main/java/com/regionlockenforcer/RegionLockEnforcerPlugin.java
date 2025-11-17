@@ -18,7 +18,6 @@ import net.runelite.api.MenuAction;
 import net.runelite.api.Tile;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ClientTick;
-import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOpened;
 import net.runelite.api.events.MenuOptionClicked;
@@ -67,9 +66,9 @@ public class RegionLockEnforcerPlugin extends Plugin
 
     private NavigationButton navButton;
 
-    // Border profile management
-    @Getter private final List<BorderProfile> borderProfiles = new ArrayList<>();
-    @Getter private BorderProfile currentBorderProfile = null;
+    // Region management
+    @Getter private final List<Region> regions = new ArrayList<>();
+    @Getter private Region currentRegion = null;
 
     // Current lock profile (contains menu rules, quest filters, etc.)
     @Getter private LockProfile currentProfile = new LockProfile();
@@ -82,14 +81,6 @@ public class RegionLockEnforcerPlugin extends Plugin
     
     // World map mouse listener reference for cleanup
     private java.awt.event.MouseListener worldMapMouseListener;
-
-    /**
-     * Set the current lock profile. This will be used to filter menu entries, quests, prayers, etc.
-     */
-    public void setCurrentProfile(LockProfile profile)
-    {
-        this.currentProfile = profile != null ? profile : new LockProfile();
-    }
 
     @Override protected void startUp()
     {
@@ -119,7 +110,7 @@ public class RegionLockEnforcerPlugin extends Plugin
             }
         });
         keyManager.registerKeyListener(editor.toggleEditHotkey);
-        loadBorderProfiles();
+        loadRegions();
         
         // Create and add side panel navigation button
         BufferedImage icon = loadPanelIcon();
@@ -151,7 +142,7 @@ public class RegionLockEnforcerPlugin extends Plugin
 
     @Override protected void shutDown()
     {
-        saveBorderProfiles();
+        saveRegions();
         overlayManager.remove(overlay);
         overlayManager.remove(worldMapOverlay);
         // Unregister world map mouse listener
@@ -192,36 +183,139 @@ public class RegionLockEnforcerPlugin extends Plugin
     @Provides
     RegionLockEnforcerConfig provideConfig(ConfigManager mgr) { return mgr.getConfig(RegionLockEnforcerConfig.class); }
 
+    /**
+     * Get the teleport whitelist from the current region, or null if not available.
+     * @return The whitelist Set, or null if filtering is disabled, no region is selected, or whitelist is null
+     */
+    private Set<String> getTeleportWhitelist()
+    {
+        if (config.disableTeleportFiltering() || currentRegion == null)
+        {
+            return null;
+        }
+        return currentRegion.getTeleportWhitelist();
+    }
 
+    /**
+     * Remove HTML color tags from a string.
+     */
+    private String cleanTarget(String target)
+    {
+        return target != null ? target.replaceAll("<col=[^>]*>", "").replaceAll("</col>", "") : null;
+    }
+
+    /**
+     * Check if a category is a jewellery box category.
+     */
+    private boolean isJewelleryBoxCategory(String category)
+    {
+        return category.equals("Ring of dueling") ||
+               category.equals("Games necklace") ||
+               category.equals("Combat bracelet") ||
+               category.equals("Skills necklace") ||
+               category.equals("Amulet of glory") ||
+               category.equals("Ring of wealth");
+    }
+
+    /**
+     * Find a teleport definition that matches the given option and target.
+     * @return The matching teleport, or null if no match found
+     */
+    private TeleportDefinition findMatchingTeleport(String option, String targetClean)
+    {
+        if (option == null) return null;
+        
+        for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
+        {
+            if (option.equalsIgnoreCase(teleport.getName()) && targetMatchesSimple(targetClean, teleport))
+            {
+                return teleport;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Check if a menu entry is a parent teleport entry (e.g., "Teleport" or "Rub" -> "Item name").
+     */
+    private boolean isParentTeleportEntry(String option, String targetClean)
+    {
+        if (option == null || targetClean == null) return false;
+        if (!option.equalsIgnoreCase("Teleport") && !option.equalsIgnoreCase("Rub")) return false;
+        
+        for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
+        {
+            if (teleport.getMenuTarget() != null)
+            {
+                String targetLower = targetClean.toLowerCase();
+                String menuTargetLower = teleport.getMenuTarget().toLowerCase();
+                if (targetLower.contains(menuTargetLower))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Check if any teleport for the given target item is whitelisted.
+     */
+    private boolean hasAnyWhitelistedTeleport(String targetClean, Set<String> whitelist)
+    {
+        if (targetClean == null) return false;
+        
+        String targetLower = targetClean.toLowerCase();
+        for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
+        {
+            if (teleport.getMenuTarget() != null)
+            {
+                String menuTargetLower = teleport.getMenuTarget().toLowerCase();
+                if (targetLower.contains(menuTargetLower) && whitelist.contains(teleport.getId()))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Find a submenu destination teleport that matches the option and target.
+     */
+    private TeleportDefinition findSubmenuTeleport(String option, String targetClean)
+    {
+        if (option == null) return null;
+        
+        for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
+        {
+            if (option.equalsIgnoreCase(teleport.getName()) && targetMatchesSubmenu(targetClean, teleport))
+            {
+                return teleport;
+            }
+        }
+        return null;
+    }
 
     @Subscribe
     public void onClientTick(ClientTick t)
     {
         if (client.getGameState() != GameState.LOGGED_IN) return;
         
-        
         // Filter jewellery box widgets if interface is open
-        if (!config.disableTeleportFiltering() && currentBorderProfile != null && currentBorderProfile.getTeleportWhitelist() != null)
+        Set<String> whitelist = getTeleportWhitelist();
+        if (whitelist != null)
         {
             net.runelite.api.widgets.Widget jewelleryBoxWidget = client.getWidget(590, 0);
             if (jewelleryBoxWidget != null && !jewelleryBoxWidget.isHidden())
             {
-                Set<String> whitelist = currentBorderProfile.getTeleportWhitelist();
-                
                 // Build map of teleport names to IDs for jewellery box items
                 java.util.Map<String, String> teleportNameToId = new java.util.HashMap<>();
                 for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
                 {
-                    String category = teleport.getCategory();
-                    if (category.equals("Ring of dueling") || 
-                        category.equals("Games necklace") ||
-                        category.equals("Combat bracelet") ||
-                        category.equals("Skills necklace") ||
-                        category.equals("Amulet of glory") ||
-                        category.equals("Ring of wealth"))
+                    if (isJewelleryBoxCategory(teleport.getCategory()))
                     {
-                        String teleportName = Text.standardize(teleport.getName());
-                        teleportNameToId.put(teleportName, teleport.getId());
+                        teleportNameToId.put(Text.standardize(teleport.getName()), teleport.getId());
                     }
                 }
                 
@@ -231,117 +325,33 @@ public class RegionLockEnforcerPlugin extends Plugin
         }
         
         // Filter charter ship interface if open
-        if (!config.disableTeleportFiltering() && currentBorderProfile != null && currentBorderProfile.getTeleportWhitelist() != null)
+        if (whitelist != null)
         {
             filterCharterShipInterface();
         }
         
         // Filter teleport entries (both minimenu and direct menu options) on every tick as a fallback
-        // Match on both option (destination name) and target (item name) like Custom Menu Swaps does
-        if (!config.disableTeleportFiltering() && currentBorderProfile != null && currentBorderProfile.getTeleportWhitelist() != null)
+        if (whitelist != null)
         {
-            Set<String> whitelist = currentBorderProfile.getTeleportWhitelist();
             final var entries = client.getMenuEntries();
+            final List<net.runelite.api.MenuEntry> keep = new ArrayList<>(entries.length);
             
-            // Check if we have any teleport destination entries that need filtering
-            boolean needsFiltering = false;
             for (var me : entries)
             {
                 String option = me.getOption();
-                String target = me.getTarget();
-                String targetClean = target != null ? target.replaceAll("<col=[^>]*>", "").replaceAll("</col>", "") : null;
+                String targetClean = cleanTarget(me.getTarget());
+                TeleportDefinition matchedTeleport = findMatchingTeleport(option, targetClean);
                 
-                // Match on both option (destination name) and target (item name)
-                // Format: option matches teleport.getName() AND target contains teleport.getMenuTarget()
-                if (option != null)
+                // Keep if it's whitelisted or not a teleport destination entry
+                if (matchedTeleport == null || whitelist.contains(matchedTeleport.getId()))
                 {
-                    for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
-                    {
-                        if (option.equalsIgnoreCase(teleport.getName()))
-                        {
-                            // Option matches - check if target matches item name
-                            boolean targetMatches = false;
-                            if (targetClean != null && teleport.getMenuTarget() != null)
-                            {
-                                String targetLower = targetClean.toLowerCase();
-                                String menuTargetLower = teleport.getMenuTarget().toLowerCase();
-                                targetMatches = targetLower.contains(menuTargetLower);
-                            }
-                            else if (targetClean == null || targetClean.isEmpty())
-                            {
-                                // Target is empty - still match if option matches (for direct menu options)
-                                targetMatches = true;
-                            }
-                            
-                            if (targetMatches && !whitelist.contains(teleport.getId()))
-                            {
-                                // This is a teleport destination entry that's not whitelisted
-                                needsFiltering = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (needsFiltering) break;
+                    keep.add(me);
                 }
             }
             
-            // Filter if needed
-            if (needsFiltering)
+            if (keep.size() != entries.length)
             {
-                final List<net.runelite.api.MenuEntry> keep = new ArrayList<>(entries.length);
-                
-                for (var me : entries)
-                {
-                    String option = me.getOption();
-                    String target = me.getTarget();
-                    String targetClean = target != null ? target.replaceAll("<col=[^>]*>", "").replaceAll("</col>", "") : null;
-                    
-                    // Check if this is a teleport destination entry (minimenu or direct option)
-                    // Match on both option and target like Custom Menu Swaps
-                    boolean isTeleportDestination = false;
-                    TeleportDefinition matchedTeleport = null;
-                    
-                    if (option != null)
-                    {
-                        for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
-                        {
-                            if (option.equalsIgnoreCase(teleport.getName()))
-                            {
-                                // Option matches - check if target matches item name
-                                boolean targetMatches = false;
-                                if (targetClean != null && teleport.getMenuTarget() != null)
-                                {
-                                    String targetLower = targetClean.toLowerCase();
-                                    String menuTargetLower = teleport.getMenuTarget().toLowerCase();
-                                    targetMatches = targetLower.contains(menuTargetLower);
-                                }
-                                else if (targetClean == null || targetClean.isEmpty())
-                                {
-                                    // Target is empty - still match if option matches (for direct menu options)
-                                    targetMatches = true;
-                                }
-                                
-                                if (targetMatches)
-                                {
-                                    isTeleportDestination = true;
-                                    matchedTeleport = teleport;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Keep if it's whitelisted or not a teleport destination entry
-                    if (!isTeleportDestination || (matchedTeleport != null && whitelist.contains(matchedTeleport.getId())))
-                    {
-                        keep.add(me);
-                    }
-                }
-                
-                if (keep.size() != entries.length)
-                {
-                    client.setMenuEntries(keep.toArray(new net.runelite.api.MenuEntry[0]));
-                }
+                client.setMenuEntries(keep.toArray(new net.runelite.api.MenuEntry[0]));
             }
         }
     }
@@ -442,17 +452,11 @@ public class RegionLockEnforcerPlugin extends Plugin
         
         // Filter teleport entries using the exact same approach as Custom Menu Swaps custom hides
         // This uses ForwardsMenuIterator pattern to handle submenus correctly
-        if (config.disableTeleportFiltering())
-        {
-            return; // If teleport filtering is disabled, don't filter anything
-        }
-        
-        if (currentBorderProfile == null || currentBorderProfile.getTeleportWhitelist() == null)
+        Set<String> whitelist = getTeleportWhitelist();
+        if (whitelist == null)
         {
             return;
         }
-        
-        Set<String> whitelist = currentBorderProfile.getTeleportWhitelist();
         final var entries = client.getMenuEntries();
         
         // Use the same pattern as Custom Menu Swaps: separate lists for main menu and submenu
@@ -496,13 +500,7 @@ public class RegionLockEnforcerPlugin extends Plugin
                 String standardizedOption = Text.standardize(option);
                 for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
                 {
-                    String category = teleport.getCategory();
-                    if ((category.equals("Ring of dueling") || 
-                         category.equals("Games necklace") ||
-                         category.equals("Combat bracelet") ||
-                         category.equals("Skills necklace") ||
-                         category.equals("Amulet of glory") ||
-                         category.equals("Ring of wealth")) &&
+                    if (isJewelleryBoxCategory(teleport.getCategory()) &&
                         Text.standardize(teleport.getName()).equals(standardizedOption))
                     {
                         // This is a jewellery box teleport - check if whitelisted
@@ -542,7 +540,7 @@ public class RegionLockEnforcerPlugin extends Plugin
                         
                         // Match option and target directly (e.g., "Travel" -> "Primio")
                         boolean optionMatches = option.equals(teleportOption);
-                        boolean targetMatches = teleportTarget.isEmpty() || effectiveTarget.equals(teleportTarget);
+                        boolean targetMatches = teleportTarget.isEmpty() || (effectiveTarget != null && effectiveTarget.equals(teleportTarget));
                         
                         if (optionMatches && targetMatches)
                         {
@@ -562,28 +560,9 @@ public class RegionLockEnforcerPlugin extends Plugin
                     
                     // Exact matching like CustomSwap.matches() does (EQUALS match type)
                     // For submenu entries, use parent target; for main entries, use entry target
+                    // option is guaranteed to be non-null here (checked at line 524)
                     boolean optionMatches = option.equals(teleportOption);
-                    boolean targetMatches = teleportTarget.isEmpty() || effectiveTarget.equals(teleportTarget);
-                    
-                    // Special case: Amulet of glory teleports also match "Amulet of eternal glory"
-                    if (!targetMatches && teleportTarget.equals("amulet of glory"))
-                    {
-                        targetMatches = effectiveTarget.equals("amulet of eternal glory");
-                    }
-                    if (!targetMatches && teleportTarget.equals("amulet of eternal glory"))
-                    {
-                        targetMatches = effectiveTarget.equals("amulet of glory");
-                    }
-                    
-                    // Special case: Slayer ring teleports also match "Slayer ring (eternal)"
-                    if (!targetMatches && teleportTarget.equals("slayer ring"))
-                    {
-                        targetMatches = effectiveTarget.equals("slayer ring (eternal)");
-                    }
-                    if (!targetMatches && teleportTarget.equals("slayer ring (eternal)"))
-                    {
-                        targetMatches = effectiveTarget.equals("slayer ring");
-                    }
+                    boolean targetMatches = targetMatchesWithSpecialCases(effectiveTarget, teleportTarget);
                     
                     if (optionMatches && targetMatches)
                     {
@@ -665,8 +644,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         // Handle spellbook filtering
         if ("spellbookSort".equals(event.getEventName()))
         {
-            handleSpellbookFiltering(event);
-            return;
+            handleSpellbookFiltering();
         }
     }
     
@@ -690,9 +668,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         if (scriptId == 7336)
         {
             handleCharterShipFiltering();
-            return;
         }
-        
     }
     
     /**
@@ -700,13 +676,11 @@ public class RegionLockEnforcerPlugin extends Plugin
      */
     private void handleCharterShipFiltering()
     {
-        // Only filter if we have a whitelist
-        if (currentBorderProfile == null || currentBorderProfile.getTeleportWhitelist() == null)
+        Set<String> whitelist = getTeleportWhitelist();
+        if (whitelist == null)
         {
             return;
         }
-        
-        Set<String> whitelist = currentBorderProfile.getTeleportWhitelist();
         
         // Get the text widget for this destination option (same as jewellery box)
         net.runelite.api.widgets.Widget textWidget = client.getScriptActiveWidget();
@@ -722,49 +696,31 @@ public class RegionLockEnforcerPlugin extends Plugin
             return;
         }
         
-        // Parse the destination name from the widget text
-        // Format from debug: '<col=ffffff>0</col> :  Port Sarim'
-        String destinationName = widgetText;
-        
-        // Remove HTML color tags and key prefix (e.g., "<col=ffffff>0</col> :  " or "0: ")
-        destinationName = destinationName.replaceAll("<col=[^>]*>", "");
-        destinationName = destinationName.replaceAll("</col>", "");
-        destinationName = destinationName.replaceAll("^[0-9A-Za-z]\\s*:\\s*", ""); // Match "0 :  " or "0: "
-        destinationName = destinationName.trim();
-        
-        // Standardize the name for matching
-        String standardizedName = Text.standardize(destinationName);
+        // Parse destination name: remove HTML tags and key prefix (e.g., "0: Port Sarim")
+        String destinationName = cleanTarget(widgetText);
+        if (destinationName != null)
+        {
+            destinationName = destinationName.replaceAll("^[0-9A-Za-z]\\s*:\\s*", "").trim();
+        }
         
         // Check if this destination is whitelisted
         boolean isWhitelisted = false;
-        for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
+        if (destinationName != null && !destinationName.isEmpty())
         {
-            if (teleport.getCategory().equals("Charter Ships"))
+            String standardizedName = Text.standardize(destinationName);
+            for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
             {
-                String teleportName = Text.standardize(teleport.getName());
-                if (standardizedName.equals(teleportName))
+                if (teleport.getCategory().equals("Charter Ships") &&
+                    Text.standardize(teleport.getName()).equals(standardizedName) &&
+                    whitelist.contains(teleport.getId()))
                 {
-                    String teleportId = teleport.getId();
-                    if (whitelist.contains(teleportId))
-                    {
-                        isWhitelisted = true;
-                    }
+                    isWhitelisted = true;
                     break;
                 }
             }
         }
         
-        // Hide the widget if not whitelisted (same approach as jewellery box)
-        // For charter ships, we hide the widget but don't adjust the stack to avoid layout issues
-        if (!isWhitelisted)
-        {
-            textWidget.setHidden(true);
-        }
-        else
-        {
-            // Ensure widget is visible if whitelisted
-            textWidget.setHidden(false);
-        }
+        textWidget.setHidden(!isWhitelisted);
     }
     
     /**
@@ -772,14 +728,11 @@ public class RegionLockEnforcerPlugin extends Plugin
      */
     private void handleJewelleryBoxFiltering()
     {
-        
-        // Only filter if we have a whitelist
-        if (currentBorderProfile == null || currentBorderProfile.getTeleportWhitelist() == null)
+        Set<String> whitelist = getTeleportWhitelist();
+        if (whitelist == null)
         {
             return;
         }
-        
-        Set<String> whitelist = currentBorderProfile.getTeleportWhitelist();
         
         // Get the text widget for this teleport option (same as Better Teleport Menu)
         net.runelite.api.widgets.Widget textWidget = client.getScriptActiveWidget();
@@ -797,14 +750,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         
         // Parse the teleport name from the widget text
         // Format is typically: "<col=735a28>X</col>: Teleport Name" or just "Teleport Name"
-        String teleportName = widgetText;
-        
-        // Remove HTML color tags and key prefix (e.g., "<col=735a28>X</col>: " or "<col=735a28>: ")
-        teleportName = teleportName.replaceAll("<col=[^>]*>", "");
-        teleportName = teleportName.replaceAll("</col>", "");
-        teleportName = teleportName.replaceAll("^[A-Za-z0-9]:\\s*", ""); // Remove "X: " prefix
-        teleportName = teleportName.replaceAll("^:\\s*", ""); // Remove ": " prefix if no key
-        teleportName = teleportName.trim();
+        String teleportName = parseTeleportNameFromWidget(widgetText);
         
         // Match against jewellery box teleport names
         String standardizedName = Text.standardize(teleportName);
@@ -812,13 +758,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         
         for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
         {
-            String category = teleport.getCategory();
-            if ((category.equals("Ring of dueling") || 
-                 category.equals("Games necklace") ||
-                 category.equals("Combat bracelet") ||
-                 category.equals("Skills necklace") ||
-                 category.equals("Amulet of glory") ||
-                 category.equals("Ring of wealth")) &&
+            if (isJewelleryBoxCategory(teleport.getCategory()) &&
                 Text.standardize(teleport.getName()).equals(standardizedName))
             {
                 // Found matching teleport - check if whitelisted
@@ -847,19 +787,12 @@ public class RegionLockEnforcerPlugin extends Plugin
      */
     private void filterCharterShipInterface()
     {
-        if (config.disableTeleportFiltering())
-        {
-            lastCharterShipWidgetId = -1; // Reset if conditions not met
-            return; // If teleport filtering is disabled, don't filter anything
-        }
-        
-        if (currentBorderProfile == null || currentBorderProfile.getTeleportWhitelist() == null)
+        Set<String> whitelist = getTeleportWhitelist();
+        if (whitelist == null)
         {
             lastCharterShipWidgetId = -1; // Reset if conditions not met
             return;
         }
-        
-        Set<String> whitelist = currentBorderProfile.getTeleportWhitelist();
         
         // Build map of charter ship destination names to IDs
         java.util.Map<String, String> destinationNameToId = new java.util.HashMap<>();
@@ -924,10 +857,15 @@ public class RegionLockEnforcerPlugin extends Plugin
     }
     
     /**
-     * Quick check to see if a widget tree contains charter ship destinations (without full filtering).
+     * Generic widget tree traversal method.
+     * @param widget The widget to start traversal from
+     * @param matcher Function that returns true if widget matches (stops traversal), false to continue
+     * @param depth Current depth
+     * @param maxDepth Maximum depth to traverse
+     * @return true if a match was found, false otherwise
      */
-    private boolean checkWidgetTreeForCharterDestinations(net.runelite.api.widgets.Widget widget,
-                                                         java.util.Map<String, String> destinationNameToId,
+    private boolean traverseWidgetTree(net.runelite.api.widgets.Widget widget,
+                                     java.util.function.Function<net.runelite.api.widgets.Widget, Boolean> matcher,
                                                          int depth,
                                                          int maxDepth)
     {
@@ -936,38 +874,19 @@ public class RegionLockEnforcerPlugin extends Plugin
             return false;
         }
         
-        String widgetText = widget.getText();
-        if (widgetText != null && !widgetText.isEmpty())
-        {
-            // Check for "Destination" title
-            if (widgetText.contains("Destination"))
+        Boolean match = matcher.apply(widget);
+        if (match != null && match)
             {
                 return true;
             }
             
-            // Parse destination name from text (format: "0: Port Sarim", "1: Brimhaven", etc.)
-            String destinationName = widgetText;
-            // Remove number/letter prefix (e.g., "0: ", "1: ", "B: ", etc.)
-            destinationName = destinationName.replaceAll("^[0-9A-Za-z]:\\s*", "");
-            destinationName = destinationName.trim();
-            
-            String standardizedText = Text.standardize(destinationName);
-            for (String destinationNameKey : destinationNameToId.keySet())
-            {
-                if (standardizedText.equals(destinationNameKey))
-                {
-                    return true;
-                }
-            }
-        }
-        
-        // Check children
+        // Recursively check children
         net.runelite.api.widgets.Widget[] children = widget.getChildren();
         if (children != null)
         {
             for (net.runelite.api.widgets.Widget child : children)
             {
-                if (checkWidgetTreeForCharterDestinations(child, destinationNameToId, depth + 1, maxDepth))
+                if (traverseWidgetTree(child, matcher, depth + 1, maxDepth))
                 {
                     return true;
                 }
@@ -980,7 +899,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         {
             for (net.runelite.api.widgets.Widget child : dynamicChildren)
             {
-                if (checkWidgetTreeForCharterDestinations(child, destinationNameToId, depth + 1, maxDepth))
+                if (traverseWidgetTree(child, matcher, depth + 1, maxDepth))
                 {
                     return true;
                 }
@@ -991,37 +910,35 @@ public class RegionLockEnforcerPlugin extends Plugin
     }
     
     /**
-     * Search widget tree for charter ship destination text (for debugging).
+     * Generic widget tree traversal method for filtering (modifies widgets).
+     * @param widget The widget to start traversal from
+     * @param matcher Function that returns true if widget matches (stops traversal), false to continue
+     * @param depth Current depth
+     * @param maxDepth Maximum depth to traverse
      */
-    private String searchWidgetTreeForCharterText(net.runelite.api.widgets.Widget widget, int depth, int maxDepth)
+    private void traverseWidgetTreeForFiltering(net.runelite.api.widgets.Widget widget,
+                                               java.util.function.Function<net.runelite.api.widgets.Widget, Boolean> matcher,
+                                               int depth,
+                                               int maxDepth)
     {
         if (widget == null || depth > maxDepth)
         {
-            return null;
+            return;
         }
         
-        String widgetText = widget.getText();
-        if (widgetText != null && !widgetText.isEmpty() && 
-            (widgetText.contains("Port Sarim") || widgetText.contains("Brimhaven") || 
-             widgetText.contains("Catherby") || widgetText.contains("Musa Point") ||
-             widgetText.contains("Port Khazard") || widgetText.contains("Corsair Cove") ||
-             widgetText.contains("Port Phasmatys") || widgetText.contains("Port Tyras") ||
-             widgetText.contains("Mos Le'Harmless") || widgetText.contains("Shipyard")))
+        Boolean match = matcher.apply(widget);
+        if (match != null && match)
         {
-            return widgetText;
+            return; // Found a match, no need to recurse further
         }
         
-        // Check children
+        // Recursively check children
         net.runelite.api.widgets.Widget[] children = widget.getChildren();
         if (children != null)
         {
             for (net.runelite.api.widgets.Widget child : children)
             {
-                String result = searchWidgetTreeForCharterText(child, depth + 1, maxDepth);
-                if (result != null)
-                {
-                    return result;
-                }
+                traverseWidgetTreeForFiltering(child, matcher, depth + 1, maxDepth);
             }
         }
         
@@ -1031,66 +948,51 @@ public class RegionLockEnforcerPlugin extends Plugin
         {
             for (net.runelite.api.widgets.Widget child : dynamicChildren)
             {
-                String result = searchWidgetTreeForCharterText(child, depth + 1, maxDepth);
-                if (result != null)
-                {
-                    return result;
-                }
+                traverseWidgetTreeForFiltering(child, matcher, depth + 1, maxDepth);
             }
         }
         
-        return null;
+        // Check nested children
+        net.runelite.api.widgets.Widget[] nestedChildren = widget.getNestedChildren();
+        if (nestedChildren != null)
+                {
+            for (net.runelite.api.widgets.Widget child : nestedChildren)
+            {
+                traverseWidgetTreeForFiltering(child, matcher, depth + 1, maxDepth);
+            }
+        }
     }
     
     /**
-     * Search widget tree for specific text strings (for debugging).
+     * Quick check to see if a widget tree contains charter ship destinations (without full filtering).
      */
-    private boolean searchWidgetTreeForText(net.runelite.api.widgets.Widget widget, String[] searchTerms, int depth, int maxDepth)
+    private boolean checkWidgetTreeForCharterDestinations(net.runelite.api.widgets.Widget widget,
+                                                         java.util.Map<String, String> destinationNameToId,
+                                                         int depth,
+                                                         int maxDepth)
     {
-        if (widget == null || depth > maxDepth)
-        {
-            return false;
-        }
-        
-        String widgetText = widget.getText();
+        return traverseWidgetTree(widget, w -> {
+            String widgetText = w.getText();
         if (widgetText != null && !widgetText.isEmpty())
         {
-            for (String searchTerm : searchTerms)
-            {
-                if (widgetText.contains(searchTerm))
+                // Check for "Destination" title
+                if (widgetText.contains("Destination"))
                 {
                     return true;
                 }
-            }
-        }
-        
-        // Check children
-        net.runelite.api.widgets.Widget[] children = widget.getChildren();
-        if (children != null)
-        {
-            for (net.runelite.api.widgets.Widget child : children)
-            {
-                if (searchWidgetTreeForText(child, searchTerms, depth + 1, maxDepth))
-                {
-                    return true;
+                
+                // Parse destination name from text (format: "0: Port Sarim", "1: Brimhaven", etc.)
+                String destinationName = widgetText;
+                // Remove number/letter prefix (e.g., "0: ", "1: ", "B: ", etc.)
+                destinationName = destinationName.replaceAll("^[0-9A-Za-z]:\\s*", "");
+                destinationName = destinationName.trim();
+                
+                String standardizedText = Text.standardize(destinationName);
+                return destinationNameToId.keySet().stream()
+                    .anyMatch(key -> standardizedText.equals(key));
                 }
-            }
-        }
-        
-        // Check dynamic children
-        net.runelite.api.widgets.Widget[] dynamicChildren = widget.getDynamicChildren();
-        if (dynamicChildren != null)
-        {
-            for (net.runelite.api.widgets.Widget child : dynamicChildren)
-            {
-                if (searchWidgetTreeForText(child, searchTerms, depth + 1, maxDepth))
-                {
-                    return true;
-                }
-            }
-        }
-        
         return false;
+        }, depth, maxDepth);
     }
     
     /**
@@ -1101,13 +1003,8 @@ public class RegionLockEnforcerPlugin extends Plugin
                                                   Set<String> whitelist,
                                                   int depth)
     {
-        if (widget == null || depth > 20)
-        {
-            return;
-        }
-        
-        // Check widget text for destination names
-        String widgetText = widget.getText();
+        traverseWidgetTreeForFiltering(widget, w -> {
+            String widgetText = w.getText();
         if (widgetText != null && !widgetText.isEmpty())
         {
             // Parse destination name from text (format: "0: Port Sarim", "1: Brimhaven", etc.)
@@ -1122,53 +1019,18 @@ public class RegionLockEnforcerPlugin extends Plugin
             if (destinationId != null)
             {
                 // Found a charter ship destination - hide if not whitelisted
-                if (!whitelist.contains(destinationId))
-                {
-                    widget.setHidden(true);
+                    w.setHidden(!whitelist.contains(destinationId));
+                    return true; // Found a match, stop traversal
                 }
-                else
-                {
-                    widget.setHidden(false);
-                }
-                return; // Found a match, no need to recurse further
             }
-        }
-        
-        // Recursively check children
-        net.runelite.api.widgets.Widget[] children = widget.getChildren();
-        if (children != null)
-        {
-            for (net.runelite.api.widgets.Widget child : children)
-            {
-                filterCharterShipWidgetsRecursive(child, destinationNameToId, whitelist, depth + 1);
-            }
-        }
-        
-        // Check dynamic children
-        net.runelite.api.widgets.Widget[] dynamicChildren = widget.getDynamicChildren();
-        if (dynamicChildren != null)
-        {
-            for (net.runelite.api.widgets.Widget child : dynamicChildren)
-            {
-                filterCharterShipWidgetsRecursive(child, destinationNameToId, whitelist, depth + 1);
-            }
-        }
-        
-        // Check nested children
-        net.runelite.api.widgets.Widget[] nestedChildren = widget.getNestedChildren();
-        if (nestedChildren != null)
-        {
-            for (net.runelite.api.widgets.Widget child : nestedChildren)
-            {
-                filterCharterShipWidgetsRecursive(child, destinationNameToId, whitelist, depth + 1);
-            }
-        }
+            return false;
+        }, depth, 20);
     }
     
     /**
      * Handle spellbook filtering via script callback.
      */
-    private void handleSpellbookFiltering(ScriptCallbackEvent event)
+    private void handleSpellbookFiltering()
     {
 
         // Get spell array from script stack (same as SpellbookPlugin)
@@ -1183,7 +1045,8 @@ public class RegionLockEnforcerPlugin extends Plugin
         int[] spells = client.getArray(spellArrayId); // enum indices
 
         // If teleport filtering is disabled or no profile, ensure all spells are visible and don't filter
-        if (config.disableTeleportFiltering() || currentBorderProfile == null || currentBorderProfile.getTeleportWhitelist() == null)
+        Set<String> whitelist = getTeleportWhitelist();
+        if (whitelist == null)
         {
             // Unhide all spell widgets
             for (int i = 0; i < numSpells; ++i)
@@ -1198,8 +1061,6 @@ public class RegionLockEnforcerPlugin extends Plugin
             // Don't modify the spell array - let it pass through unchanged
             return;
         }
-
-        Set<String> whitelist = currentBorderProfile.getTeleportWhitelist();
 
         // Build a map of spell names to teleport IDs for faster lookup
         java.util.Map<String, String> spellNameToTeleportId = new java.util.HashMap<>();
@@ -1241,16 +1102,7 @@ public class RegionLockEnforcerPlugin extends Plugin
             // If it's a teleport spell, hide/show the widget based on whitelist
             if (isTeleportSpell && spellWidget != null)
             {
-                if (isWhitelisted)
-                {
-                    // Show the spell
-                    spellWidget.setHidden(false);
-                }
-                else
-                {
-                    // Hide the spell
-                    spellWidget.setHidden(true);
-                }
+                spellWidget.setHidden(!isWhitelisted);
             }
             else if (spellWidget != null)
             {
@@ -1278,85 +1130,35 @@ public class RegionLockEnforcerPlugin extends Plugin
                                                     Set<String> whitelist,
                                                     int depth)
     {
-        if (widget == null || depth > 20)
-        {
-            return;
-        }
-        
-        // Check widget text, name, and action parameter
-        String widgetText = widget.getText();
-        String widgetName = widget.getName();
-        
-        // Try to match teleport by text
+        traverseWidgetTreeForFiltering(widget, w -> {
+            // Check widget text
+            String widgetText = w.getText();
         if (widgetText != null && !widgetText.isEmpty())
         {
             String standardizedText = Text.standardize(widgetText);
-            
-            // Try to match teleport by text
             String teleportId = teleportNameToId.get(standardizedText);
             if (teleportId != null)
             {
-                // Found a teleport widget - hide if not whitelisted
-                if (!whitelist.contains(teleportId))
-                {
-                    widget.setHidden(true);
-                }
-                else
-                {
-                    widget.setHidden(false);
-                }
-                return; // Found a match, no need to recurse further
+                    w.setHidden(!whitelist.contains(teleportId));
+                    return true; // Found a match, stop traversal
             }
         }
         
-        // Also check widget name
+            // Check widget name
+            String widgetName = w.getName();
         if (widgetName != null && !widgetName.isEmpty())
         {
             String standardizedName = Text.standardize(widgetName);
             String teleportId = teleportNameToId.get(standardizedName);
             if (teleportId != null)
             {
-                if (!whitelist.contains(teleportId))
-                {
-                    widget.setHidden(true);
-                }
-                else
-                {
-                    widget.setHidden(false);
-                }
-                return; // Found a match, no need to recurse further
+                    w.setHidden(!whitelist.contains(teleportId));
+                    return true; // Found a match, stop traversal
             }
         }
         
-        // Recursively check children
-        net.runelite.api.widgets.Widget[] children = widget.getChildren();
-        if (children != null)
-        {
-            for (net.runelite.api.widgets.Widget child : children)
-            {
-                filterJewelleryBoxWidgetsRecursive(child, teleportNameToId, whitelist, depth + 1);
-            }
-        }
-        
-        // Check dynamic children
-        net.runelite.api.widgets.Widget[] dynamicChildren = widget.getDynamicChildren();
-        if (dynamicChildren != null)
-        {
-            for (net.runelite.api.widgets.Widget child : dynamicChildren)
-            {
-                filterJewelleryBoxWidgetsRecursive(child, teleportNameToId, whitelist, depth + 1);
-            }
-        }
-        
-        // Check nested children
-        net.runelite.api.widgets.Widget[] nestedChildren = widget.getNestedChildren();
-        if (nestedChildren != null)
-        {
-            for (net.runelite.api.widgets.Widget child : nestedChildren)
-            {
-                filterJewelleryBoxWidgetsRecursive(child, teleportNameToId, whitelist, depth + 1);
-            }
-        }
+            return false;
+        }, depth, 20);
     }
 
     /**
@@ -1370,6 +1172,12 @@ public class RegionLockEnforcerPlugin extends Plugin
         // Invoke on client thread to avoid "must be called on client thread" errors
         clientThread.invokeLater(() ->
         {
+            // Only redraw if client is logged in and ready
+            if (client.getGameState() != GameState.LOGGED_IN)
+            {
+                return;
+            }
+            
             // Use the spellbook UNIVERSE widget (same as SpellbookPlugin)
             // Widget ID 218 is the spellbook interface, widget 0 is the UNIVERSE container
             net.runelite.api.widgets.Widget spellbookWidget = client.getWidget(218, 0);
@@ -1403,7 +1211,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         boolean shiftDown = client.isKeyPressed(KeyCode.KC_SHIFT);
 
         // Editor: shift-click toggles tile marking (mark if unmarked, unmark if marked)
-        if (editor.editing && shiftDown && wp != null && currentBorderProfile != null
+        if (editor.editing && shiftDown && wp != null && currentRegion != null
                 && (typeId == MenuAction.WALK.getId()
                 || typeId == MenuAction.GAME_OBJECT_FIRST_OPTION.getId()
                 || typeId == MenuAction.GROUND_ITEM_FIRST_OPTION.getId()
@@ -1411,20 +1219,18 @@ public class RegionLockEnforcerPlugin extends Plugin
         {
             e.consume();
             // Toggle: if marked, unmark it; if unmarked, mark it
-            if (currentBorderProfile.getBoundaryTiles().contains(wp))
+            if (currentRegion.getBoundaryTiles().contains(wp))
             {
-                currentBorderProfile.removeTile(wp);
-                // Clear inner tiles when boundary changes
-                currentBorderProfile.getInnerTiles().clear();
+                currentRegion.removeTile(wp);
             }
             else
             {
-                currentBorderProfile.addTile(wp);
-                // Clear inner tiles when boundary changes
-                currentBorderProfile.getInnerTiles().clear();
+                currentRegion.addTile(wp);
             }
-            saveBorderProfiles(); // Save immediately on change
-            notifyBorderProfilesChanged();
+                // Clear inner tiles when boundary changes
+            currentRegion.getInnerTiles().clear();
+            saveRegions(); // Save immediately on change
+            notifyRegionsChanged();
             return;
         }
 
@@ -1448,38 +1254,15 @@ public class RegionLockEnforcerPlugin extends Plugin
         // Block ALL clicks outside the bordered region (only when inner tiles are computed)
         // Only block within normal surface map bounds (excludes underground, instances, upper/lower floors)
         // Only block game world actions (WALK, GAME_OBJECT, GROUND_ITEM, NPC, etc.), not UI actions
-        if (wp != null && currentBorderProfile != null && !currentBorderProfile.getInnerTiles().isEmpty())
+        if (wp != null && currentRegion != null && !currentRegion.getInnerTiles().isEmpty())
         {
             // Only apply click blocking within normal surface map bounds
-            if (isWithinSurfaceBounds(wp))
+            if (isWithinSurfaceBounds(wp) && isGameWorldAction(typeId))
             {
-                // Only block if this is a game world action, not a UI action
-                boolean isGameWorldAction = 
-                    typeId == MenuAction.WALK.getId() ||
-                    typeId == MenuAction.GAME_OBJECT_FIRST_OPTION.getId() ||
-                    typeId == MenuAction.GAME_OBJECT_SECOND_OPTION.getId() ||
-                    typeId == MenuAction.GAME_OBJECT_THIRD_OPTION.getId() ||
-                    typeId == MenuAction.GAME_OBJECT_FOURTH_OPTION.getId() ||
-                    typeId == MenuAction.GAME_OBJECT_FIFTH_OPTION.getId() ||
-                    typeId == MenuAction.GROUND_ITEM_FIRST_OPTION.getId() ||
-                    typeId == MenuAction.GROUND_ITEM_SECOND_OPTION.getId() ||
-                    typeId == MenuAction.GROUND_ITEM_THIRD_OPTION.getId() ||
-                    typeId == MenuAction.GROUND_ITEM_FOURTH_OPTION.getId() ||
-                    typeId == MenuAction.GROUND_ITEM_FIFTH_OPTION.getId() ||
-                    typeId == MenuAction.NPC_FIRST_OPTION.getId() ||
-                    typeId == MenuAction.NPC_SECOND_OPTION.getId() ||
-                    typeId == MenuAction.NPC_THIRD_OPTION.getId() ||
-                    typeId == MenuAction.NPC_FOURTH_OPTION.getId() ||
-                    typeId == MenuAction.NPC_FIFTH_OPTION.getId();
-                
-                if (isGameWorldAction)
+                Set<WorldPoint> clickableTiles = currentRegion.getAllClickableTiles();
+                if (!clickableTiles.contains(wp))
                 {
-                    Set<WorldPoint> clickableTiles = currentBorderProfile.getAllClickableTiles();
-                    if (!clickableTiles.contains(wp))
-                    {
-                        // Block all clicks outside the border (only game world clicks, not UI)
-            e.consume();
-                    }
+                    e.consume();
                 }
             }
         }
@@ -1497,126 +1280,35 @@ public class RegionLockEnforcerPlugin extends Plugin
         
         // Filter teleports based on whitelist (if region has teleport whitelist configured)
         // We need to filter on EVERY MenuEntryAdded event to catch submenu entries as they're added
-        boolean shouldFilter = false;
-        if (config.disableTeleportFiltering())
+        Set<String> whitelist = getTeleportWhitelist();
+        if (whitelist != null)
         {
-            // If teleport filtering is disabled, skip filtering
-            shouldFilter = false;
-        }
-        else if (currentBorderProfile != null && currentBorderProfile.getTeleportWhitelist() != null)
-        {
-            Set<String> whitelist = currentBorderProfile.getTeleportWhitelist();
             final var entries = client.getMenuEntries();
             final List<net.runelite.api.MenuEntry> keep = new ArrayList<>(entries.length);
             
             for (var me : entries)
             {
                 String option = me.getOption();
-                String target = me.getTarget();
+                String targetClean = cleanTarget(me.getTarget());
                 
-                // Strip HTML color tags from target for comparison
-                String targetClean = target != null ? target.replaceAll("<col=[^>]*>", "").replaceAll("</col>", "") : null;
+                // Check if this is a submenu destination entry first
+                TeleportDefinition matchedTeleport = findSubmenuTeleport(option, targetClean);
                 
-                // Check if this is a parent teleport menu entry (e.g., "Teleport" or "Rub" -> "Item name")
-                // Parent entries open a submenu with individual destination options
-                // Only treat as parent entry if the item is actually in our teleport registry
-                boolean isParentTeleportEntry = false;
-                if (option != null && (option.equalsIgnoreCase("Teleport") || option.equalsIgnoreCase("Rub")) && targetClean != null)
+                if (matchedTeleport != null)
                 {
-                    // Check if this item is in our teleport registry
-                    for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
-                    {
-                        if (teleport.getMenuTarget() != null)
-                        {
-                            String targetLower = targetClean.toLowerCase();
-                            String menuTargetLower = teleport.getMenuTarget().toLowerCase();
-                            if (targetLower.contains(menuTargetLower))
-                            {
-                                isParentTeleportEntry = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                // Check if this is a submenu destination entry (destination name -> item name)
-                // Submenu entries can have different formats:
-                // 1. Option: "Darkfrost", Target: "Pendant of ates" (destination -> item)
-                // 2. Option: "Darkfrost", Target: "Darkfrost" (just destination)
-                // 3. Option: "Darkfrost", Target: null/empty (just destination)
-                boolean isSubmenuDestination = false;
-                TeleportDefinition matchedTeleport = null;
-                
-                // First, try to match as a specific destination (submenu entry)
-                for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
-                {
-                    // For submenu entries, the option should be the destination name
-                    if (option != null && option.equalsIgnoreCase(teleport.getName()))
-                    {
-                        // If target is null/empty, or matches the destination name, or contains the item name
-                        boolean targetMatches = false;
-                        if (targetClean == null || targetClean.isEmpty())
-                        {
-                            // Target is empty - this could be a submenu entry
-                            targetMatches = true;
-                        }
-                        else if (teleport.getMenuTarget() != null)
-                        {
-                            String targetLower = targetClean.toLowerCase();
-                            String menuTargetLower = teleport.getMenuTarget().toLowerCase();
-                            String nameLower = teleport.getName().toLowerCase();
-                            
-                            // Target contains item name OR target matches destination name
-                            if (targetLower.contains(menuTargetLower) || targetLower.equals(nameLower))
-                            {
-                                targetMatches = true;
-                            }
-                        }
-                        
-                        if (targetMatches)
-                        {
-                            isSubmenuDestination = true;
-                            matchedTeleport = teleport;
-                            break;
-                        }
-                    }
-                }
-                
-                
-                // If not a submenu destination, check if it's a parent teleport entry
-                if (!isSubmenuDestination && isParentTeleportEntry)
-                {
-                    // For parent entries, check if ANY teleport for this item is whitelisted
-                    boolean hasAnyWhitelisted = false;
-                    for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
-                    {
-                        if (targetClean != null && teleport.getMenuTarget() != null)
-                        {
-                            String targetLower = targetClean.toLowerCase();
-                            String menuTargetLower = teleport.getMenuTarget().toLowerCase();
-                            if (targetLower.contains(menuTargetLower) && whitelist.contains(teleport.getId()))
-                            {
-                                hasAnyWhitelisted = true;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    // Keep parent entry if at least one teleport is whitelisted
-                    if (hasAnyWhitelisted)
+                    // Submenu destination entry - keep if whitelisted
+                    if (whitelist.contains(matchedTeleport.getId()))
                     {
                         keep.add(me);
                     }
-                    // Otherwise filter it out
                 }
-                else if (isSubmenuDestination)
+                else if (isParentTeleportEntry(option, targetClean))
                 {
-                    // For submenu entries, check if this specific teleport is whitelisted
-                    if (matchedTeleport != null && whitelist.contains(matchedTeleport.getId()))
+                    // Parent teleport entry - keep if any teleport for this item is whitelisted
+                    if (hasAnyWhitelistedTeleport(targetClean, whitelist))
                     {
                         keep.add(me);
                     }
-                    // Otherwise filter it out
                 }
                 else
                 {
@@ -1628,7 +1320,6 @@ public class RegionLockEnforcerPlugin extends Plugin
             if (keep.size() != entries.length)
             {
                 client.setMenuEntries(keep.toArray(new net.runelite.api.MenuEntry[0]));
-                shouldFilter = true;
             }
         }
 
@@ -1654,27 +1345,25 @@ public class RegionLockEnforcerPlugin extends Plugin
                 
                 if (!shouldBlock)
                 {
-                keep.add(me);
+                    keep.add(me);
                 }
             }
             
             if (keep.size() != entries.length)
             {
                 client.setMenuEntries(keep.toArray(new net.runelite.api.MenuEntry[0]));
-                shouldFilter = true;
             }
         }
-
 
         // Remove ALL menu entries for tiles outside the border (only when inner tiles are computed)
         // Only filter within normal surface map bounds (excludes underground, instances, upper/lower floors)
         // Whitelist approach: filter everything, then explicitly allow only UI actions
-        if (!shouldFilter && hoveredWp != null && !editor.editing && currentBorderProfile != null && !currentBorderProfile.getInnerTiles().isEmpty())
+        if (hoveredWp != null && !editor.editing && currentRegion != null && !currentRegion.getInnerTiles().isEmpty())
         {
             // Only apply menu filtering within normal surface map bounds
             if (isWithinSurfaceBounds(hoveredWp))
             {
-                Set<WorldPoint> clickableTiles = currentBorderProfile.getAllClickableTiles();
+                Set<WorldPoint> clickableTiles = currentRegion.getAllClickableTiles();
                 if (!clickableTiles.contains(hoveredWp))
                 {
                     // Filter ALL menu entries, then explicitly allow only UI actions
@@ -1683,36 +1372,8 @@ public class RegionLockEnforcerPlugin extends Plugin
                     
                     for (var me : entries)
                     {
-                        MenuAction actionType = me.getType();
-                        
                         // Whitelist: only keep UI-related actions
-                        // Use pattern matching to catch all UI actions reliably
-                        String actionName = actionType.name();
-                        boolean isUIAction = false;
-                        
-                        if (actionName != null)
-                        {
-                            // Explicit UI action types
-                            isUIAction = 
-                                actionType == MenuAction.CC_OP ||
-                                actionType == MenuAction.WIDGET_TARGET ||
-                                actionType == MenuAction.WIDGET_TYPE_1 ||
-                                actionType == MenuAction.WIDGET_TYPE_4 ||
-                                actionType == MenuAction.WIDGET_TYPE_5 ||
-                                actionType == MenuAction.CANCEL;
-                            
-                            // Pattern-based check for UI actions (WIDGET, ITEM_USE, etc.)
-                            if (!isUIAction)
-                            {
-                                isUIAction = 
-                                    actionName.contains("WIDGET") ||
-                                    actionName.contains("ITEM_USE") ||
-                                    actionName.contains("CC_OP");
-                            }
-                        }
-                        
-                        // Only keep UI actions, filter everything else
-                        if (isUIAction)
+                        if (isUIAction(me.getType()))
                         {
                             keep.add(me);
                         }
@@ -1737,14 +1398,14 @@ public class RegionLockEnforcerPlugin extends Plugin
             { 
                 // Only allow toggle if current profile is in edit mode (has no inner tiles)
                 // If profile is finished (has inner tiles), don't allow toggle
-                if (currentBorderProfile != null && currentBorderProfile.getInnerTiles().isEmpty())
+                if (currentRegion != null && currentRegion.getInnerTiles().isEmpty())
                 {
                     editing = !editing;
                 }
-                // If no border profile exists, create one and enable editing
-                else if (currentBorderProfile == null)
+                // If no region exists, create one and enable editing
+                else if (currentRegion == null)
                 {
-                    createBorderProfile(null); // Will auto-generate name
+                    createRegion(null); // Will auto-generate name
                     editing = true;
                 }
             }
@@ -1753,65 +1414,162 @@ public class RegionLockEnforcerPlugin extends Plugin
     }
 
     /**
-     * Convert a mouse click point on the world map to a WorldPoint.
-     * Uses the Client's world map API to properly account for zoom and pan.
-     * 
-     * @param relativePoint Mouse point relative to the map panel widget
-     * @param mapPanel The world map panel widget
-     * @return The WorldPoint corresponding to the clicked location, or null if conversion fails
+     * Check if a tile has at least one outer edge (neighbor not in hull).
      */
-    public WorldPoint getWorldPointFromMapClick(java.awt.Point relativePoint, net.runelite.api.widgets.Widget mapPanel)
+    private boolean hasOuterEdge(WorldPoint tile, Set<WorldPoint> hullTiles, int plane)
     {
-        try
-        {
-            // Get the map panel's dimensions
-            java.awt.Rectangle mapBounds = mapPanel.getBounds();
-            int mapWidth = mapBounds.width;
-            int mapHeight = mapBounds.height;
-            
-            // World map covers the entire surface map
-            // Surface map bounds: X: 960-3968 (3008 tiles), Y: 1984-4096 (2112 tiles)
-            final int MIN_X = 960;
-            final int MAX_X = 3968;
-            final int MIN_Y = 1984;
-            final int MAX_Y = 4096;
-            final int WORLD_WIDTH = MAX_X - MIN_X + 1;  // 3008 tiles
-            final int WORLD_HEIGHT = MAX_Y - MIN_Y + 1;  // 2112 tiles
-            
-            // Calculate world coordinates based on click position
-            // Map the click position to the world coordinate range
-            // Note: Y is inverted in screen coordinates (top = higher Y in world)
-            double xRatio = (double)relativePoint.x / mapWidth;
-            double yRatio = 1.0 - ((double)relativePoint.y / mapHeight); // Invert Y
-            
-            int worldX = MIN_X + (int)(xRatio * WORLD_WIDTH);
-            int worldY = MIN_Y + (int)(yRatio * WORLD_HEIGHT);
-            
-            // Clamp to valid world coordinates
-            worldX = Math.max(MIN_X, Math.min(MAX_X, worldX));
-            worldY = Math.max(MIN_Y, Math.min(MAX_Y, worldY));
-            
-            // Use surface plane (0) by default
-            return new WorldPoint(worldX, worldY, 0);
-        }
-        catch (Exception ex)
-        {
-            log.warn("Failed to convert world map click to WorldPoint", ex);
-            return null;
-        }
+        int x = tile.getX();
+        int y = tile.getY();
+        
+        WorldPoint northNeighbor = new WorldPoint(x, y + 1, plane);
+        WorldPoint southNeighbor = new WorldPoint(x, y - 1, plane);
+        WorldPoint eastNeighbor = new WorldPoint(x + 1, y, plane);
+        WorldPoint westNeighbor = new WorldPoint(x - 1, y, plane);
+        
+        return !hullTiles.contains(northNeighbor) || 
+               !hullTiles.contains(southNeighbor) || 
+               !hullTiles.contains(eastNeighbor) || 
+               !hullTiles.contains(westNeighbor);
     }
 
     /**
-     * Import a border profile from a file (called from sidebar).
+     * Check if a MenuAction is a UI-related action (widget, inventory, etc.).
      */
-    public void importBorderProfileFromFile(String filePath)
+    private boolean isUIAction(MenuAction actionType)
     {
-        BorderProfile imported = importBorderProfile(filePath);
+        return actionType == MenuAction.CC_OP ||
+               actionType == MenuAction.WIDGET_TARGET ||
+               actionType == MenuAction.WIDGET_TYPE_1 ||
+               actionType == MenuAction.WIDGET_TYPE_4 ||
+               actionType == MenuAction.WIDGET_TYPE_5 ||
+               actionType == MenuAction.CANCEL ||
+               actionType.name().contains("WIDGET") ||
+               actionType.name().contains("ITEM_USE");
+    }
+
+    /**
+     * Check if a menu action type is a game world action (walk, interact with objects/NPCs/items).
+     */
+    private boolean isGameWorldAction(int typeId)
+    {
+        return typeId == MenuAction.WALK.getId() ||
+               typeId == MenuAction.GAME_OBJECT_FIRST_OPTION.getId() ||
+               typeId == MenuAction.GAME_OBJECT_SECOND_OPTION.getId() ||
+               typeId == MenuAction.GAME_OBJECT_THIRD_OPTION.getId() ||
+               typeId == MenuAction.GAME_OBJECT_FOURTH_OPTION.getId() ||
+               typeId == MenuAction.GAME_OBJECT_FIFTH_OPTION.getId() ||
+               typeId == MenuAction.GROUND_ITEM_FIRST_OPTION.getId() ||
+               typeId == MenuAction.GROUND_ITEM_SECOND_OPTION.getId() ||
+               typeId == MenuAction.GROUND_ITEM_THIRD_OPTION.getId() ||
+               typeId == MenuAction.GROUND_ITEM_FOURTH_OPTION.getId() ||
+               typeId == MenuAction.GROUND_ITEM_FIFTH_OPTION.getId() ||
+               typeId == MenuAction.NPC_FIRST_OPTION.getId() ||
+               typeId == MenuAction.NPC_SECOND_OPTION.getId() ||
+               typeId == MenuAction.NPC_THIRD_OPTION.getId() ||
+               typeId == MenuAction.NPC_FOURTH_OPTION.getId() ||
+               typeId == MenuAction.NPC_FIFTH_OPTION.getId();
+    }
+
+    /**
+     * Parse teleport name from widget text by removing HTML tags and key prefixes.
+     */
+    private String parseTeleportNameFromWidget(String widgetText)
+    {
+        String teleportName = widgetText;
+            
+        // Remove HTML color tags and key prefix (e.g., "<col=735a28>X</col>: " or "<col=735a28>: ")
+        teleportName = teleportName.replaceAll("<col=[^>]*>", "");
+        teleportName = teleportName.replaceAll("</col>", "");
+        teleportName = teleportName.replaceAll("^[A-Za-z0-9]:\\s*", ""); // Remove "X: " prefix
+        teleportName = teleportName.replaceAll("^:\\s*", ""); // Remove ": " prefix if no key
+        teleportName = teleportName.trim();
+        
+        return teleportName;
+    }
+
+    /**
+     * Check if target matches teleport menu target (simple contains check).
+     * Returns true if target is empty (for direct menu options).
+     */
+    private boolean targetMatchesSimple(String targetClean, TeleportDefinition teleport)
+    {
+        if (targetClean != null && teleport.getMenuTarget() != null)
+        {
+            String targetLower = targetClean.toLowerCase();
+            String menuTargetLower = teleport.getMenuTarget().toLowerCase();
+            return targetLower.contains(menuTargetLower);
+        }
+        else if (targetClean == null || targetClean.isEmpty())
+        {
+            // Target is empty - still match if option matches (for direct menu options)
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Check if target matches teleport with special cases for amulet of glory and slayer ring.
+     */
+    private boolean targetMatchesWithSpecialCases(String effectiveTarget, String teleportTarget)
+    {
+        boolean targetMatches = teleportTarget.isEmpty() || (effectiveTarget != null && effectiveTarget.equals(teleportTarget));
+        
+        // Special case: Amulet of glory teleports also match "Amulet of eternal glory"
+        if (!targetMatches && teleportTarget.equals("amulet of glory") && effectiveTarget != null)
+        {
+            targetMatches = effectiveTarget.equals("amulet of eternal glory");
+        }
+        if (!targetMatches && teleportTarget.equals("amulet of eternal glory") && effectiveTarget != null)
+        {
+            targetMatches = effectiveTarget.equals("amulet of glory");
+        }
+        
+        // Special case: Slayer ring teleports also match "Slayer ring (eternal)"
+        if (!targetMatches && teleportTarget.equals("slayer ring") && effectiveTarget != null)
+        {
+            targetMatches = effectiveTarget.equals("slayer ring (eternal)");
+        }
+        if (!targetMatches && teleportTarget.equals("slayer ring (eternal)") && effectiveTarget != null)
+        {
+            targetMatches = effectiveTarget.equals("slayer ring");
+        }
+        
+        return targetMatches;
+    }
+
+    /**
+     * Check if target matches teleport for submenu entries (target contains item name OR matches destination name).
+     */
+    private boolean targetMatchesSubmenu(String targetClean, TeleportDefinition teleport)
+    {
+        if (targetClean == null || targetClean.isEmpty())
+        {
+            // Target is empty - this could be a submenu entry
+            return true;
+        }
+        else if (teleport.getMenuTarget() != null)
+        {
+            String targetLower = targetClean.toLowerCase();
+            String menuTargetLower = teleport.getMenuTarget().toLowerCase();
+            String nameLower = teleport.getName().toLowerCase();
+            
+            // Target contains item name OR target matches destination name
+            return targetLower.contains(menuTargetLower) || targetLower.equals(nameLower);
+        }
+        return false;
+    }
+
+    /**
+     * Import a region from a file (called from sidebar).
+     */
+    public void importRegionFromFile(String filePath)
+    {
+        Region imported = importRegion(filePath);
         
         if (imported != null)
         {
             // Check if profile with same name exists
-            boolean exists = borderProfiles.stream()
+            boolean exists = regions.stream()
                     .anyMatch(p -> p.getName().equals(imported.getName()));
             
             if (exists)
@@ -1824,7 +1582,7 @@ public class RegionLockEnforcerPlugin extends Plugin
                 {
                     newName = baseName + " (" + counter + ")";
                     final String checkName = newName;
-                    if (!borderProfiles.stream().anyMatch(p -> p.getName().equals(checkName)))
+                    if (!regions.stream().anyMatch(p -> p.getName().equals(checkName)))
                     {
                         break;
                     }
@@ -1833,10 +1591,10 @@ public class RegionLockEnforcerPlugin extends Plugin
                 imported.setName(newName);
             }
             
-            borderProfiles.add(imported);
-            currentBorderProfile = imported;
-            saveBorderProfiles();
-            notifyBorderProfilesChanged();
+            regions.add(imported);
+            currentRegion = imported;
+            saveRegions();
+            notifyRegionsChanged();
             
             javax.swing.JOptionPane.showMessageDialog(
                 null,
@@ -1856,86 +1614,73 @@ public class RegionLockEnforcerPlugin extends Plugin
         }
     }
 
-    @Subscribe
-    public void onGameStateChanged(GameStateChanged e)
-    {
-        if (e.getGameState() == GameState.LOGGED_IN && !config.disableBorder())
-        {
-            // Region Lock running
-        }
-    }
-
-
-
-
 
     /**
-     * Load border profiles from config.
+     * Load regions from config.
      */
-    private void loadBorderProfiles()
+    private void loadRegions()
     {
-        String profilesStr = configManager.getConfiguration(RegionLockEnforcerConfig.GROUP, "borderProfiles");
-        borderProfiles.clear();
+        String profilesStr = configManager.getConfiguration(RegionLockEnforcerConfig.GROUP, "regions");
+        regions.clear();
         if (profilesStr != null && !profilesStr.isEmpty())
         {
-            List<BorderProfile> loaded = BorderProfileSerializer.deserializeBorderProfiles(profilesStr);
-            // Cache is already pre-computed in deserializeBorderProfile
-            borderProfiles.addAll(loaded);
+            List<Region> loaded = RegionSerializer.deserializeRegions(profilesStr);
+            // Cache is already pre-computed in deserializeRegion
+            regions.addAll(loaded);
         }
         
-        // Load selected border profile
-        String selectedName = configManager.getConfiguration(RegionLockEnforcerConfig.GROUP, "selectedBorderProfile");
+        // Load selected region
+        String selectedName = configManager.getConfiguration(RegionLockEnforcerConfig.GROUP, "selectedRegion");
         if (selectedName != null && !selectedName.isEmpty())
         {
-            currentBorderProfile = borderProfiles.stream()
+            currentRegion = regions.stream()
                     .filter(p -> p.getName().equals(selectedName))
                     .findFirst()
                     .orElse(null);
         }
         
-        // If no border selected but we have profiles, select the first one
-        if (currentBorderProfile == null && !borderProfiles.isEmpty())
+        // If no region selected but we have regions, select the first one
+        if (currentRegion == null && !regions.isEmpty())
         {
-            currentBorderProfile = borderProfiles.get(0);
+            currentRegion = regions.get(0);
         }
     }
 
     /**
-     * Save border profiles to config.
+     * Save regions to config.
      */
-    public void saveBorderProfiles()
+    public void saveRegions()
     {
-        String profilesStr = BorderProfileSerializer.serializeBorderProfiles(borderProfiles);
-        configManager.setConfiguration(RegionLockEnforcerConfig.GROUP, "borderProfiles", profilesStr);
+        String profilesStr = RegionSerializer.serializeRegions(regions);
+        configManager.setConfiguration(RegionLockEnforcerConfig.GROUP, "regions", profilesStr);
         
-        if (currentBorderProfile != null)
+        if (currentRegion != null)
         {
-            configManager.setConfiguration(RegionLockEnforcerConfig.GROUP, "selectedBorderProfile", currentBorderProfile.getName());
+            configManager.setConfiguration(RegionLockEnforcerConfig.GROUP, "selectedRegion", currentRegion.getName());
         }
     }
 
     /**
-     * Create a new border profile with the given name.
+     * Create a new region with the given name.
      */
-    public BorderProfile createBorderProfile(String name)
+    public Region createRegion(String name)
     {
         if (name == null || name.trim().isEmpty())
         {
-            name = "Border " + (borderProfiles.size() + 1);
+            name = "Region " + (regions.size() + 1);
         }
-        BorderProfile profile = new BorderProfile(name.trim());
-        borderProfiles.add(profile);
-        currentBorderProfile = profile;
-        saveBorderProfiles();
-        notifyBorderProfilesChanged();
-        // Created new border profile
+        Region profile = new Region(name.trim());
+        regions.add(profile);
+        currentRegion = profile;
+        saveRegions();
+        notifyRegionsChanged();
         return profile;
     }
 
     /**
-     * Notify that border profiles have changed (for UI refresh).
+     * Notify that regions have changed (for UI refresh).
      */
-    public void notifyBorderProfilesChanged()
+    public void notifyRegionsChanged()
     {
         if (panel != null && panel.getBorderComponent() != null)
         {
@@ -2066,8 +1811,8 @@ public class RegionLockEnforcerPlugin extends Plugin
                     return String.valueOf((char)('0' + (keyCode - java.awt.event.KeyEvent.VK_0)));
                 }
                 // Fallback: use KeyEvent key name
-                String keyText = java.awt.event.KeyEvent.getKeyText(keyCode);
-                return keyText != null ? keyText : "Unknown";
+                // getKeyText() never returns null
+                return java.awt.event.KeyEvent.getKeyText(keyCode);
         }
     }
 
@@ -2075,7 +1820,7 @@ public class RegionLockEnforcerPlugin extends Plugin
      * Re-enable editing mode for a border profile by clearing inner tiles.
      * This returns the border to the state before "Finish" was clicked.
      */
-    public void enableEditingMode(BorderProfile profile)
+    public void enableEditingMode(Region profile)
     {
         if (profile == null) return;
         
@@ -2086,51 +1831,48 @@ public class RegionLockEnforcerPlugin extends Plugin
         editor.editing = true;
         
         // Select this profile if not already selected
-        if (currentBorderProfile != profile)
+        if (currentRegion != profile)
         {
-            currentBorderProfile = profile;
+            currentRegion = profile;
         }
         
-        saveBorderProfiles();
-        notifyBorderProfilesChanged();
-            // Enabled editing mode for border profile
+        saveRegions();
+        notifyRegionsChanged();
     }
 
     /**
-     * Select a border profile by name.
+     * Select a region by name.
      */
-    public void selectBorderProfile(String name)
+    public void selectRegion(String name)
     {
         if (name == null) return;
-        currentBorderProfile = borderProfiles.stream()
+        currentRegion = regions.stream()
                 .filter(p -> p.getName().equals(name))
                 .findFirst()
                 .orElse(null);
-        if (currentBorderProfile != null)
+        if (currentRegion != null)
         {
-            saveBorderProfiles();
-            notifyBorderProfilesChanged();
-                // Selected border profile
+            saveRegions();
+            notifyRegionsChanged();
         }
     }
 
     /**
-     * Delete a border profile by name.
+     * Delete a region by name.
      */
-    public void deleteBorderProfile(String name)
+    public void deleteRegion(String name)
     {
         if (name == null) return;
-        boolean removed = borderProfiles.removeIf(p -> p.getName().equals(name));
+        boolean removed = regions.removeIf(p -> p.getName().equals(name));
         if (removed)
         {
             // If we deleted the current profile, select another one or null
-            if (currentBorderProfile != null && currentBorderProfile.getName().equals(name))
+            if (currentRegion != null && currentRegion.getName().equals(name))
             {
-                currentBorderProfile = borderProfiles.isEmpty() ? null : borderProfiles.get(0);
+                currentRegion = regions.isEmpty() ? null : regions.get(0);
             }
-            saveBorderProfiles();
-            notifyBorderProfilesChanged();
-            // Deleted border profile
+            saveRegions();
+            notifyRegionsChanged();
         }
     }
 
@@ -2164,13 +1906,6 @@ public class RegionLockEnforcerPlugin extends Plugin
         return x >= MIN_X && x <= MAX_X && y >= MIN_Y && y <= MAX_Y;
     }
 
-    /**
-     * Get the boundary tiles from the current border profile for rendering borders.
-     */
-    public Set<WorldPoint> getCurrentBorderTiles()
-    {
-        return currentBorderProfile != null ? currentBorderProfile.getBoundaryTiles() : new HashSet<>();
-    }
 
     /**
      * Compute all inner tiles (tiles inside the boundary) using flood-fill.
@@ -2180,7 +1915,7 @@ public class RegionLockEnforcerPlugin extends Plugin
      * @param profile The border profile to compute inner tiles for
      * @return true if computation was successful, false if the shape cannot be processed
      */
-    public boolean computeInnerTiles(BorderProfile profile)
+    public boolean computeInnerTiles(Region profile)
     {
         if (profile == null || profile.getBoundaryTiles().isEmpty())
         {
@@ -2192,25 +1927,15 @@ public class RegionLockEnforcerPlugin extends Plugin
         }
 
         Set<WorldPoint> boundaryTiles = profile.getBoundaryTiles();
+        if (boundaryTiles.isEmpty()) return true;
         
-        // Get the plane from boundary tiles (assume all are on same plane)
-        int plane = -1;
-        for (WorldPoint bp : boundaryTiles)
-        {
-            if (plane == -1) plane = bp.getPlane();
-            break;
-        }
-        if (plane == -1) return true;
+        // Get the plane from first boundary tile (assume all are on same plane)
+        int plane = boundaryTiles.iterator().next().getPlane();
 
         // Filter boundary tiles to the same plane
-        Set<WorldPoint> samePlaneBoundary = new HashSet<>();
-        for (WorldPoint bp : boundaryTiles)
-        {
-            if (bp.getPlane() == plane)
-            {
-                samePlaneBoundary.add(bp);
-            }
-        }
+        Set<WorldPoint> samePlaneBoundary = boundaryTiles.stream()
+            .filter(bp -> bp.getPlane() == plane)
+            .collect(java.util.stream.Collectors.toSet());
         
         if (samePlaneBoundary.isEmpty()) return true;
 
@@ -2234,22 +1959,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         Set<WorldPoint> borderTiles = new HashSet<>();
         for (WorldPoint tile : hullTiles)
         {
-            int x = tile.getX();
-            int y = tile.getY();
-            
-            // Check if this tile has at least one outer edge
-            WorldPoint northNeighbor = new WorldPoint(x, y + 1, plane);
-            WorldPoint southNeighbor = new WorldPoint(x, y - 1, plane);
-            WorldPoint eastNeighbor = new WorldPoint(x + 1, y, plane);
-            WorldPoint westNeighbor = new WorldPoint(x - 1, y, plane);
-            
-            boolean hasOuterEdge = 
-                !hullTiles.contains(northNeighbor) || 
-                !hullTiles.contains(southNeighbor) || 
-                !hullTiles.contains(eastNeighbor) || 
-                !hullTiles.contains(westNeighbor);
-            
-            if (hasOuterEdge)
+            if (hasOuterEdge(tile, hullTiles, plane))
             {
                 borderTiles.add(tile);
             }
@@ -2257,10 +1967,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         
         // Update boundary tiles to only include tiles with border lines
         profile.getBoundaryTiles().clear();
-        for (WorldPoint tile : borderTiles)
-        {
-            profile.addTile(tile);
-        }
+        profile.getBoundaryTiles().addAll(borderTiles);
         
         return true;
     }
@@ -2280,33 +1987,12 @@ public class RegionLockEnforcerPlugin extends Plugin
      * 
      * This yields the smallest-area, axis-aligned enclosure of the given tiles.
      */
-    private void computeConvexHull(BorderProfile profile, Set<WorldPoint> markedTiles, int plane)
+    private void computeConvexHull(Region profile, Set<WorldPoint> markedTiles, int plane)
     {
         if (markedTiles.isEmpty()) return;
         
-        // Step 1: Compute row spans (horizontal close)
-        // For each row (y) that contains marked tiles, find min_x and max_x
+        // Step 1: Compute row spans (horizontal close) and column spans (vertical close)
         java.util.Map<Integer, int[]> rows = new java.util.HashMap<>(); // y -> [minX, maxX]
-        
-        for (WorldPoint bp : markedTiles)
-        {
-            int x = bp.getX();
-            int y = bp.getY();
-            
-            if (!rows.containsKey(y))
-            {
-                rows.put(y, new int[]{x, x});
-            }
-            else
-            {
-                int[] span = rows.get(y);
-                if (x < span[0]) span[0] = x;
-                if (x > span[1]) span[1] = x;
-            }
-        }
-        
-        // Step 2: Compute column spans (vertical close)
-        // For each column (x) that contains marked tiles, find min_y and max_y
         java.util.Map<Integer, int[]> cols = new java.util.HashMap<>(); // x -> [minY, maxY]
         
         for (WorldPoint bp : markedTiles)
@@ -2314,76 +2000,64 @@ public class RegionLockEnforcerPlugin extends Plugin
             int x = bp.getX();
             int y = bp.getY();
             
-            if (!cols.containsKey(x))
-            {
-                cols.put(x, new int[]{y, y});
-            }
-            else
-            {
-                int[] span = cols.get(x);
+            // Update row span
+            rows.compute(y, (key, span) -> {
+                if (span == null) return new int[]{x, x};
+                if (x < span[0]) span[0] = x;
+                if (x > span[1]) span[1] = x;
+                return span;
+            });
+            
+            // Update column span
+            cols.compute(x, (key, span) -> {
+                if (span == null) return new int[]{y, y};
                 if (y < span[0]) span[0] = y;
                 if (y > span[1]) span[1] = y;
-            }
+                return span;
+            });
         }
         
-        // Step 3: Fill horizontal spans (row by row)
+        // Step 2: Fill horizontal spans (row by row) and vertical spans (column by column)
         Set<WorldPoint> hullTiles = new HashSet<>();
-        for (java.util.Map.Entry<Integer, int[]> entry : rows.entrySet())
-        {
-            int y = entry.getKey();
-            int[] span = entry.getValue();
-            int minX = span[0];
-            int maxX = span[1];
-            
-            // Fill all tiles from minX to maxX (inclusive) in this row
-            for (int x = minX; x <= maxX; x++)
-            {
-                hullTiles.add(new WorldPoint(x, y, plane));
-            }
-        }
         
-        // Step 4: Fill vertical spans (column by column)
-        for (java.util.Map.Entry<Integer, int[]> entry : cols.entrySet())
-        {
-            int x = entry.getKey();
-            int[] span = entry.getValue();
-            int minY = span[0];
-            int maxY = span[1];
-            
-            // Fill all tiles from minY to maxY (inclusive) in this column
-            for (int y = minY; y <= maxY; y++)
+        // Fill horizontal spans
+        rows.forEach((y, span) -> {
+            for (int x = span[0]; x <= span[1]; x++)
             {
                 hullTiles.add(new WorldPoint(x, y, plane));
             }
-        }
+        });
+        
+        // Fill vertical spans
+        cols.forEach((x, span) -> {
+            for (int y = span[0]; y <= span[1]; y++)
+            {
+                hullTiles.add(new WorldPoint(x, y, plane));
+            }
+        });
         
         // Step 5: Replace profile's boundary tiles with the convex hull
         // Clear existing boundary tiles and set to hull tiles
         // This ensures we always have a closed boundary
         profile.getBoundaryTiles().clear();
-        for (WorldPoint tile : hullTiles)
-        {
-            profile.addTile(tile);
-        }
-        
-        // Computed convex hull
+        profile.getBoundaryTiles().addAll(hullTiles);
     }
 
     /**
-     * Export a border profile to a JSON file.
+     * Export a region to a JSON file.
      * 
-     * @param profile The border profile to export
+     * @param profile The region to export
      * @param filePath The file path to save to
      * @return true if export was successful, false otherwise
      */
-    public boolean exportBorderProfile(BorderProfile profile, String filePath)
+    public boolean exportRegion(Region profile, String filePath)
     {
         try (java.io.FileWriter writer = new java.io.FileWriter(filePath))
         {
             Gson prettyGson = gson.newBuilder().setPrettyPrinting().create();
             
             // Create a serializable version of the profile
-            BorderProfileExport exportData = new BorderProfileExport();
+            RegionExport exportData = new RegionExport();
             exportData.name = profile.getName();
             exportData.boundaryTiles = profile.getBoundaryTiles().stream()
                 .map(wp -> new TileData(wp.getX(), wp.getY(), wp.getPlane()))
@@ -2391,73 +2065,59 @@ public class RegionLockEnforcerPlugin extends Plugin
             exportData.innerTiles = profile.getInnerTiles().stream()
                 .map(wp -> new TileData(wp.getX(), wp.getY(), wp.getPlane()))
                 .collect(java.util.stream.Collectors.toList());
-            exportData.teleportWhitelist = profile.getTeleportWhitelist() != null 
-                ? new java.util.ArrayList<>(profile.getTeleportWhitelist())
-                : new java.util.ArrayList<>();
+            exportData.teleportWhitelist = new java.util.ArrayList<>(
+                profile.getTeleportWhitelist() != null ? profile.getTeleportWhitelist() : java.util.Collections.emptySet());
             
             prettyGson.toJson(exportData, writer);
             return true;
         }
         catch (Exception e)
         {
-            log.error("Failed to export border profile", e);
+            log.error("Failed to export region", e);
             return false;
         }
     }
 
     /**
-     * Import a border profile from a JSON file.
+     * Import a region from a JSON file.
      * 
      * @param filePath The file path to load from
-     * @return The imported BorderProfile, or null if import failed
+     * @return The imported Region, or null if import failed
      */
-    public BorderProfile importBorderProfile(String filePath)
+    public Region importRegion(String filePath)
     {
         try (java.io.FileReader reader = new java.io.FileReader(filePath))
         {
-            BorderProfileExport exportData = gson.fromJson(reader, BorderProfileExport.class);
+            RegionExport exportData = gson.fromJson(reader, RegionExport.class);
             
             if (exportData == null || exportData.name == null) return null;
             
-            BorderProfile profile = new BorderProfile(exportData.name);
+            Region profile = new Region(exportData.name);
             
             // Convert tile data back to WorldPoints
-            Set<WorldPoint> boundaryTiles = new HashSet<>();
-            if (exportData.boundaryTiles != null)
-            {
-                for (TileData td : exportData.boundaryTiles)
-                {
-                    boundaryTiles.add(new WorldPoint(td.x, td.y, td.plane));
-                }
-            }
+            Set<WorldPoint> boundaryTiles = exportData.boundaryTiles != null
+                ? exportData.boundaryTiles.stream()
+                    .map(td -> new WorldPoint(td.x, td.y, td.plane))
+                    .collect(java.util.stream.Collectors.toSet())
+                : new HashSet<>();
             profile.setBoundaryTiles(boundaryTiles);
             
-            Set<WorldPoint> innerTiles = new HashSet<>();
-            if (exportData.innerTiles != null)
-            {
-                for (TileData td : exportData.innerTiles)
-                {
-                    innerTiles.add(new WorldPoint(td.x, td.y, td.plane));
-                }
-            }
+            Set<WorldPoint> innerTiles = exportData.innerTiles != null
+                ? exportData.innerTiles.stream()
+                    .map(td -> new WorldPoint(td.x, td.y, td.plane))
+                    .collect(java.util.stream.Collectors.toSet())
+                : new HashSet<>();
             profile.setInnerTiles(innerTiles);
             
-            // Load teleport whitelist
-            if (exportData.teleportWhitelist != null)
-            {
-                profile.setTeleportWhitelist(new HashSet<>(exportData.teleportWhitelist));
-            }
-            else
-            {
-                profile.setTeleportWhitelist(new HashSet<>());
-            }
+            profile.setTeleportWhitelist(exportData.teleportWhitelist != null
+                ? new HashSet<>(exportData.teleportWhitelist)
+                : new HashSet<>());
             
-            // Cache will be computed on first access (import is rare, so this is fine)
             return profile;
         }
         catch (Exception e)
         {
-            log.error("Failed to import border profile", e);
+            log.error("Failed to import region", e);
             return null;
         }
     }
@@ -2465,7 +2125,7 @@ public class RegionLockEnforcerPlugin extends Plugin
     /**
      * Helper classes for JSON export/import
      */
-    private static class BorderProfileExport
+    private static class RegionExport
     {
         String name;
         List<TileData> boundaryTiles;

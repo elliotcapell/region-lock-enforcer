@@ -50,8 +50,10 @@ public class RegionLockOverlay extends Overlay
         if (config.disableBorder() || plugin == null) return null;
         if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null) return null;
 
-        Set<WorldPoint> markedTiles = new HashSet<>(plugin.getCurrentBorderTiles());
-        com.regionlockenforcer.BorderProfile currentProfile = plugin.getCurrentBorderProfile();
+        Set<WorldPoint> markedTiles = plugin.getCurrentRegion() != null 
+            ? new HashSet<>(plugin.getCurrentRegion().getBoundaryTiles()) 
+            : new HashSet<>();
+        com.regionlockenforcer.Region currentProfile = plugin.getCurrentRegion();
         boolean hasInnerTiles = currentProfile != null && !currentProfile.getInnerTiles().isEmpty();
         
         if (hasInnerTiles)
@@ -142,7 +144,7 @@ public class RegionLockOverlay extends Overlay
         if (markedTiles.isEmpty()) return;
 
         // Get the inner tiles from the current profile
-        com.regionlockenforcer.BorderProfile currentProfile = plugin.getCurrentBorderProfile();
+        com.regionlockenforcer.Region currentProfile = plugin.getCurrentRegion();
         if (currentProfile == null) return;
         
         Set<WorldPoint> innerTiles = currentProfile.getInnerTiles();

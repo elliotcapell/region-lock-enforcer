@@ -7,12 +7,12 @@ import lombok.Data;
 import net.runelite.api.coords.WorldPoint;
 
 /**
- * Represents a named border profile containing boundary tiles and inner tiles.
+ * Represents a named region containing boundary tiles and inner tiles, and a teleport whitelist.
  * Boundary tiles define the border shape and are used for drawing borders.
  * Inner tiles are all tiles inside the boundary and are used for click blocking.
  */
 @Data
-public class BorderProfile
+public class Region
 {
     private String name;
     private Set<WorldPoint> boundaryTiles = ConcurrentHashMap.newKeySet(); // Tiles that define the border
@@ -23,14 +23,14 @@ public class BorderProfile
     // Null when cache is invalid, non-null when valid
     private transient Set<WorldPoint> cachedClickableTiles = null;
 
-    public BorderProfile()
+    public Region()
     {
-        this.name = "Untitled Border";
+        this.name = "Untitled Region";
     }
 
-    public BorderProfile(String name)
+    public Region(String name)
     {
-        this.name = name != null ? name : "Untitled Border";
+        this.name = name != null ? name : "Untitled Region";
     }
 
     public Set<WorldPoint> getBoundaryTiles()
@@ -61,7 +61,7 @@ public class BorderProfile
     }
 
     /**
-     * Add a boundary tile to this border profile.
+     * Add a boundary tile to this region.
      * @return true if the tile was added (wasn't already present)
      */
     public boolean addTile(WorldPoint tile)
@@ -75,7 +75,7 @@ public class BorderProfile
     }
 
     /**
-     * Remove a boundary tile from this border profile.
+     * Remove a boundary tile from this region.
      * @return true if the tile was removed (was present)
      */
     public boolean removeTile(WorldPoint tile)
@@ -89,7 +89,7 @@ public class BorderProfile
     }
 
     /**
-     * Toggle a boundary tile in this border profile (add if absent, remove if present).
+     * Toggle a boundary tile in this region (add if absent, remove if present).
      * @return true if the tile is now present after toggle
      */
     public boolean toggleTile(WorldPoint tile)

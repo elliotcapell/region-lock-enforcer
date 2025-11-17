@@ -27,11 +27,11 @@ import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.util.ImageUtil;
 
 /**
- * Custom config component for managing region profiles.
+ * Custom config component for managing regions.
  * Shows sections for Border and Teleports, with create/import buttons.
  */
 @Slf4j
-public class BorderProfileConfigComponent extends JPanel
+public class RegionConfigComponent extends JPanel
 {
     private final RegionLockEnforcerPlugin plugin;
     private final TeleportRegistry teleportRegistry;
@@ -45,7 +45,7 @@ public class BorderProfileConfigComponent extends JPanel
     private final ImageIcon resetIcon;
     private final ImageIcon deleteIcon;
 
-    public BorderProfileConfigComponent(RegionLockEnforcerPlugin plugin, @SuppressWarnings("unused") ConfigManager configManager, TeleportRegistry teleportRegistry)
+    public RegionConfigComponent(RegionLockEnforcerPlugin plugin, @SuppressWarnings("unused") ConfigManager configManager, TeleportRegistry teleportRegistry)
     {
         super();
         this.plugin = plugin;
@@ -65,38 +65,11 @@ public class BorderProfileConfigComponent extends JPanel
         topButtonPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
         topButtonPanel.setBorder(BorderFactory.createEmptyBorder(10, 0, 15, 0));
         
-        // Create New Region button
-        createButton = new JButton("Create New Region");
-        createButton.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-        createButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-        createButton.setFocusPainted(false);
-        createButton.addActionListener(e -> createNewRegion());
-        
-        // Import Region button
-        importButton = new JButton("Import Region");
-        importButton.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-        importButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-        importButton.setFocusPainted(false);
-        importButton.addActionListener(e -> importRegion());
-        
-        // Export Region button
-        exportRegionButton = new JButton("Export Region");
-        exportRegionButton.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-        exportRegionButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-        exportRegionButton.setFocusPainted(false);
-        exportRegionButton.addActionListener(e -> exportCurrentRegion());
-        
-        // Make all buttons equal size (use the widest text to determine size)
+        // Create buttons with consistent styling
         Dimension buttonSize = new Dimension(180, 30);
-        createButton.setPreferredSize(buttonSize);
-        createButton.setMaximumSize(buttonSize);
-        createButton.setMinimumSize(buttonSize);
-        importButton.setPreferredSize(buttonSize);
-        importButton.setMaximumSize(buttonSize);
-        importButton.setMinimumSize(buttonSize);
-        exportRegionButton.setPreferredSize(buttonSize);
-        exportRegionButton.setMaximumSize(buttonSize);
-        exportRegionButton.setMinimumSize(buttonSize);
+        createButton = createStyledButton("Create New Region", buttonSize, e -> createNewRegion());
+        importButton = createStyledButton("Import Region", buttonSize, e -> importRegion());
+        exportRegionButton = createStyledButton("Export Region", buttonSize, e -> exportCurrentRegion());
         
         // Center buttons horizontally
         JPanel createButtonPanel = new JPanel();
@@ -221,6 +194,22 @@ public class BorderProfileConfigComponent extends JPanel
         refreshBorderList();
     }
 
+    /**
+     * Create a styled button with consistent appearance.
+     */
+    private JButton createStyledButton(String text, Dimension size, java.awt.event.ActionListener action)
+    {
+        JButton button = new JButton(text);
+        button.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+        button.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+        button.setFocusPainted(false);
+        button.setPreferredSize(size);
+        button.setMaximumSize(size);
+        button.setMinimumSize(size);
+        button.addActionListener(action);
+        return button;
+    }
+
     private void createNewRegion()
     {
         String name = JOptionPane.showInputDialog(
@@ -234,12 +223,12 @@ public class BorderProfileConfigComponent extends JPanel
         {
             String trimmedName = name.trim();
             // Check if profile with this name already exists
-            boolean exists = plugin.getBorderProfiles().stream()
+            boolean exists = plugin.getRegions().stream()
                     .anyMatch(p -> p.getName().equals(trimmedName));
             
             if (!exists)
             {
-                BorderProfile newProfile = plugin.createBorderProfile(trimmedName);
+                Region newProfile = plugin.createRegion(trimmedName);
                 // Automatically enable editing mode for the new profile
                 if (newProfile != null)
                 {
@@ -270,7 +259,7 @@ public class BorderProfileConfigComponent extends JPanel
         if (result == JFileChooser.APPROVE_OPTION)
         {
             java.io.File file = fileChooser.getSelectedFile();
-            plugin.importBorderProfileFromFile(file.getAbsolutePath());
+            plugin.importRegionFromFile(file.getAbsolutePath());
             refreshRegionList();
             refreshBorderList();
             refreshTeleportsList();
@@ -279,7 +268,7 @@ public class BorderProfileConfigComponent extends JPanel
     
     private void exportCurrentRegion()
     {
-        BorderProfile currentProfile = plugin.getCurrentBorderProfile();
+        Region currentProfile = plugin.getCurrentRegion();
         if (currentProfile == null)
         {
             JOptionPane.showMessageDialog(
@@ -294,7 +283,7 @@ public class BorderProfileConfigComponent extends JPanel
         exportRegion(currentProfile);
     }
     
-    private void exportRegion(BorderProfile profile)
+    private void exportRegion(Region profile)
     {
         JFileChooser fileChooser = new JFileChooser();
         fileChooser.setDialogTitle("Export Region");
@@ -311,7 +300,7 @@ public class BorderProfileConfigComponent extends JPanel
                 filePath += ".json";
             }
             
-            if (plugin.exportBorderProfile(profile, filePath))
+            if (plugin.exportRegion(profile, filePath))
             {
                 JOptionPane.showMessageDialog(
                     this,
@@ -346,13 +335,13 @@ public class BorderProfileConfigComponent extends JPanel
 
         if (result == JOptionPane.YES_OPTION)
         {
-            plugin.deleteBorderProfile(regionName);
+            plugin.deleteRegion(regionName);
             refreshRegionList();
             refreshBorderList();
         }
     }
     
-    private void resetBorder(BorderProfile profile)
+    private void resetBorder(Region profile)
     {
         int result = JOptionPane.showConfirmDialog(
             this,
@@ -367,8 +356,8 @@ public class BorderProfileConfigComponent extends JPanel
             // Clear all boundary tiles and inner tiles
             profile.getBoundaryTiles().clear();
             profile.getInnerTiles().clear();
-            plugin.saveBorderProfiles();
-            plugin.notifyBorderProfilesChanged();
+            plugin.saveRegions();
+            plugin.notifyRegionsChanged();
             // Automatically enable editing mode after reset
             plugin.setEditing(true);
             refreshRegionList();
@@ -377,7 +366,7 @@ public class BorderProfileConfigComponent extends JPanel
     }
 
 
-    private void finishBorderFromList(BorderProfile profile)
+    private void finishBorderFromList(Region profile)
     {
         if (profile.getBoundaryTiles().isEmpty())
         {
@@ -405,22 +394,22 @@ public class BorderProfileConfigComponent extends JPanel
                 JOptionPane.ERROR_MESSAGE
             );
             // Keep editing mode enabled (inner tiles are already cleared by computeInnerTiles)
-            plugin.saveBorderProfiles();
-            plugin.notifyBorderProfilesChanged();
+            plugin.saveRegions();
+            plugin.notifyRegionsChanged();
             refreshBorderList();
             return;
         }
         
         // Success - turn off editing toggle when finishing
         plugin.setEditing(false);
-        plugin.saveBorderProfiles();
-        plugin.notifyBorderProfilesChanged();
+        plugin.saveRegions();
+        plugin.notifyRegionsChanged();
         refreshRegionList();
         refreshBorderList();
     }
 
 
-    private void editBorder(BorderProfile profile)
+    private void editBorder(Region profile)
     {
         // Re-enable editing mode: clear inner tiles and enable editor
         plugin.enableEditingMode(profile);
@@ -432,7 +421,7 @@ public class BorderProfileConfigComponent extends JPanel
     {
         try
         {
-            BufferedImage image = ImageUtil.loadImageResource(BorderProfileConfigComponent.class, resourcePath);
+            BufferedImage image = ImageUtil.loadImageResource(RegionConfigComponent.class, resourcePath);
             if (image != null)
             {
                 return new ImageIcon(image);
@@ -542,7 +531,7 @@ public class BorderProfileConfigComponent extends JPanel
         SwingUtilities.invokeLater(() -> {
             borderListPanel.removeAll();
 
-            BorderProfile currentProfile = plugin.getCurrentBorderProfile();
+            Region currentProfile = plugin.getCurrentRegion();
             
             if (currentProfile == null)
             {
@@ -640,8 +629,8 @@ public class BorderProfileConfigComponent extends JPanel
             
             regionListPanel.removeAll();
             
-            java.util.List<BorderProfile> profiles = plugin.getBorderProfiles();
-            BorderProfile currentProfile = plugin.getCurrentBorderProfile();
+            java.util.List<Region> profiles = plugin.getRegions();
+            Region currentProfile = plugin.getCurrentRegion();
             
             if (profiles.isEmpty())
             {
@@ -655,7 +644,7 @@ public class BorderProfileConfigComponent extends JPanel
             }
             else
             {
-                for (BorderProfile profile : profiles)
+                for (Region profile : profiles)
                 {
                     // Panel for each region item
                     JPanel regionItemPanel = new JPanel(new BorderLayout());
@@ -681,7 +670,7 @@ public class BorderProfileConfigComponent extends JPanel
                     nameLabel.addMouseListener(new java.awt.event.MouseAdapter() {
                         @Override
                         public void mouseClicked(java.awt.event.MouseEvent e) {
-                            plugin.selectBorderProfile(profile.getName());
+                            plugin.selectRegion(profile.getName());
                             refreshRegionList();
                             refreshBorderList();
                         }
@@ -692,7 +681,7 @@ public class BorderProfileConfigComponent extends JPanel
                         @Override
                         public void mouseExited(java.awt.event.MouseEvent e) {
                             regionItemPanel.setBackground(
-                                profile == plugin.getCurrentBorderProfile()
+                                profile == plugin.getCurrentRegion()
                                     ? ColorScheme.DARKER_GRAY_HOVER_COLOR
                                     : ColorScheme.DARK_GRAY_COLOR
                             );
@@ -729,7 +718,7 @@ public class BorderProfileConfigComponent extends JPanel
             
             teleportsPanel.removeAll();
             
-            BorderProfile currentProfile = plugin.getCurrentBorderProfile();
+            Region currentProfile = plugin.getCurrentRegion();
             if (currentProfile == null)
             {
                 JPanel emptyPanel = new JPanel(new BorderLayout());
@@ -892,7 +881,7 @@ public class BorderProfileConfigComponent extends JPanel
                                 }
                             }
                             
-                            plugin.saveBorderProfiles();
+                            plugin.saveRegions();
                             // Redraw spellbook to apply changes immediately
                             plugin.redrawSpellbook();
                         });

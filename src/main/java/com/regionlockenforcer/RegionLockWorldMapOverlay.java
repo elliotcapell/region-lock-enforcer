@@ -62,7 +62,7 @@ public class RegionLockWorldMapOverlay extends Overlay
             return null;
         }
 
-        BorderProfile currentProfile = plugin.getCurrentBorderProfile();
+        Region currentProfile = plugin.getCurrentRegion();
         if (currentProfile == null)
         {
             return null;
@@ -127,7 +127,7 @@ public class RegionLockWorldMapOverlay extends Overlay
         graphics.setColor(Color.BLACK);
 
         // Get current border profile to check for selected chunks
-        BorderProfile currentProfile = plugin.getCurrentBorderProfile();
+        Region currentProfile = plugin.getCurrentRegion();
         boolean hasSelectedAreas = currentProfile != null && !currentProfile.getBoundaryTiles().isEmpty();
 
         // Draw chunk grid lines and fill selected chunks
@@ -180,7 +180,7 @@ public class RegionLockWorldMapOverlay extends Overlay
 
         graphics.setClip(worldMapRect);
 
-        BorderProfile currentProfile = plugin.getCurrentBorderProfile();
+        Region currentProfile = plugin.getCurrentRegion();
         if (currentProfile == null) return;
 
         // Determine which tiles to show and what color to use
@@ -269,7 +269,7 @@ public class RegionLockWorldMapOverlay extends Overlay
             return false;
         }
 
-        if (plugin == null || !plugin.isEditing() || plugin.getCurrentBorderProfile() == null)
+        if (plugin == null || !plugin.isEditing() || plugin.getCurrentRegion() == null)
         {
             return false;
         }
@@ -335,7 +335,7 @@ public class RegionLockWorldMapOverlay extends Overlay
             int baseY = floorToMultiple(worldPoint.getY(), tileGroupSize);
             int plane = worldPoint.getPlane();
 
-            BorderProfile currentProfile = plugin.getCurrentBorderProfile();
+            Region currentProfile = plugin.getCurrentRegion();
             if (currentProfile == null)
             {
                 return;
@@ -351,8 +351,8 @@ public class RegionLockWorldMapOverlay extends Overlay
                 currentProfile.addArea(baseX, baseY, plane, tileGroupSize);
             }
 
-            plugin.saveBorderProfiles();
-            plugin.notifyBorderProfilesChanged();
+            plugin.saveRegions();
+            plugin.notifyRegionsChanged();
 
             shouldHandle[0] = true;
         });

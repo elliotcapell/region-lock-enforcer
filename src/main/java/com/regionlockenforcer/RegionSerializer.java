@@ -9,11 +9,11 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.coords.WorldPoint;
 
 /**
- * Utility class for serializing/deserializing BorderProfile objects to/from strings.
+ * Utility class for serializing/deserializing Region objects to/from strings.
  * Uses a simple format: "name|tile1;tile2;tile3" where tiles are "x,y,plane"
  */
 @Slf4j
-public class BorderProfileSerializer
+public class RegionSerializer
 {
 
     /**
@@ -54,7 +54,7 @@ public class BorderProfileSerializer
     {
         if (tiles == null || tiles.isEmpty()) return "";
         return tiles.stream()
-                .map(BorderProfileSerializer::worldPointToString)
+                .map(RegionSerializer::worldPointToString)
                 .filter(s -> s != null)
                 .collect(Collectors.joining(";"));
     }
@@ -115,51 +115,51 @@ public class BorderProfileSerializer
     }
 
     /**
-     * Serialize a BorderProfile to string format: "name|boundaryTiles|innerTiles|teleportWhitelist"
+     * Serialize a Region to string format: "name|boundaryTiles|innerTiles|teleportWhitelist"
      * Format: "name|tile1;tile2;tile3|tile4;tile5;tile6|teleport1;teleport2"
      * Special characters in name are escaped: | becomes ||, ; becomes |;
      */
-    public static String serializeBorderProfile(BorderProfile profile)
+    public static String serializeRegion(Region region)
     {
-        if (profile == null) return "";
+        if (region == null) return "";
         try
         {
-            String name = profile.getName() != null ? profile.getName() : "Untitled Border";
+            String name = region.getName() != null ? region.getName() : "Untitled Region";
             // Escape special characters: | -> ||, ; -> |;
             name = name.replace("|", "||").replace(";", "|;");
-            String boundaryTiles = serializeTiles(profile.getBoundaryTiles());
-            String innerTiles = serializeTiles(profile.getInnerTiles());
-            String teleportWhitelist = serializeStrings(profile.getTeleportWhitelist());
+            String boundaryTiles = serializeTiles(region.getBoundaryTiles());
+            String innerTiles = serializeTiles(region.getInnerTiles());
+            String teleportWhitelist = serializeStrings(region.getTeleportWhitelist());
             return name + "|" + boundaryTiles + "|" + innerTiles + "|" + teleportWhitelist;
         }
         catch (Exception e)
         {
-            log.warn("Failed to serialize BorderProfile", e);
+            log.warn("Failed to serialize Region", e);
             return "";
         }
     }
 
     /**
-     * Deserialize a BorderProfile from string format.
+     * Deserialize a Region from string format.
      * Supports old formats for backward compatibility:
      * - Old format 1: "name|tiles" (just boundary tiles)
      * - Old format 2: "name|boundaryTiles|innerTiles" (no teleport whitelist)
      * - New format: "name|boundaryTiles|innerTiles|teleportWhitelist"
      */
-    public static BorderProfile deserializeBorderProfile(String str)
+    public static Region deserializeRegion(String str)
     {
-        if (str == null || str.isEmpty()) return new BorderProfile();
+        if (str == null || str.isEmpty()) return new Region();
         try
         {
             int firstPipeIndex = str.indexOf('|');
-            if (firstPipeIndex == -1) return new BorderProfile();
+            if (firstPipeIndex == -1) return new Region();
             
             String name = str.substring(0, firstPipeIndex);
             // Unescape special characters: || -> |, |; -> ;
             name = name.replace("|;", ";").replace("||", "|");
             
             String rest = str.substring(firstPipeIndex + 1);
-            BorderProfile profile = new BorderProfile(name);
+            Region region = new Region(name);
             
             // Split by | to get all parts
             String[] parts = rest.split("\\|", -1); // -1 to keep trailing empty strings
@@ -167,84 +167,84 @@ public class BorderProfileSerializer
             if (parts.length >= 3)
             {
                 // New format: boundaryTiles|innerTiles|teleportWhitelist
-                profile.setBoundaryTiles(deserializeTiles(parts[0]));
-                profile.setInnerTiles(deserializeTiles(parts[1]));
+                region.setBoundaryTiles(deserializeTiles(parts[0]));
+                region.setInnerTiles(deserializeTiles(parts[1]));
                 if (!parts[2].isEmpty())
                 {
-                    profile.setTeleportWhitelist(deserializeStrings(parts[2]));
+                    region.setTeleportWhitelist(deserializeStrings(parts[2]));
                 }
                 else
                 {
-                    profile.setTeleportWhitelist(new HashSet<>());
+                    region.setTeleportWhitelist(new HashSet<>());
                 }
             }
             else if (parts.length == 2)
             {
                 // Old format 2: boundaryTiles|innerTiles (no teleport whitelist)
-                profile.setBoundaryTiles(deserializeTiles(parts[0]));
-                profile.setInnerTiles(deserializeTiles(parts[1]));
-                profile.setTeleportWhitelist(new HashSet<>());
+                region.setBoundaryTiles(deserializeTiles(parts[0]));
+                region.setInnerTiles(deserializeTiles(parts[1]));
+                region.setTeleportWhitelist(new HashSet<>());
             }
             else
             {
                 // Old format 1: just tiles (treat as boundary tiles for backward compatibility)
-                profile.setBoundaryTiles(deserializeTiles(rest));
-                profile.setInnerTiles(new HashSet<>());
-                profile.setTeleportWhitelist(new HashSet<>());
+                region.setBoundaryTiles(deserializeTiles(rest));
+                region.setInnerTiles(new HashSet<>());
+                region.setTeleportWhitelist(new HashSet<>());
             }
             
             // Pre-compute the cache so it's ready immediately (no lag on first access)
-            profile.ensureCacheComputed();
+            region.ensureCacheComputed();
             
-            return profile;
+            return region;
         }
         catch (Exception e)
         {
-            log.warn("Failed to deserialize BorderProfile from string: {}", str, e);
-            return new BorderProfile();
+            log.warn("Failed to deserialize Region from string: {}", str, e);
+            return new Region();
         }
     }
 
     /**
-     * Serialize a list of BorderProfiles to string format.
-     * Profiles are separated by newlines.
+     * Serialize a list of Regions to string format.
+     * Regions are separated by newlines.
      */
-    public static String serializeBorderProfiles(List<BorderProfile> profiles)
+    public static String serializeRegions(List<Region> regions)
     {
-        if (profiles == null || profiles.isEmpty()) return "";
-        return profiles.stream()
-                .map(BorderProfileSerializer::serializeBorderProfile)
+        if (regions == null || regions.isEmpty()) return "";
+        return regions.stream()
+                .map(RegionSerializer::serializeRegion)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.joining("\n"));
     }
 
     /**
-     * Deserialize a list of BorderProfiles from string format.
-     * Profiles are separated by newlines.
+     * Deserialize a list of Regions from string format.
+     * Regions are separated by newlines.
      */
-    public static List<BorderProfile> deserializeBorderProfiles(String str)
+    public static List<Region> deserializeRegions(String str)
     {
-        List<BorderProfile> profiles = new ArrayList<>();
-        if (str == null || str.isEmpty()) return profiles;
+        List<Region> regions = new ArrayList<>();
+        if (str == null || str.isEmpty()) return regions;
         try
         {
             String[] lines = str.split("\n");
             for (String line : lines)
             {
                 if (line.isEmpty()) continue;
-                BorderProfile profile = deserializeBorderProfile(line);
-                if (profile != null)
+                Region region = deserializeRegion(line);
+                if (region != null)
                 {
-                    // Cache is already pre-computed in deserializeBorderProfile
-                    profiles.add(profile);
+                    // Cache is already pre-computed in deserializeRegion
+                    regions.add(region);
                 }
             }
         }
         catch (Exception e)
         {
-            log.warn("Failed to deserialize border profiles from string: {}", str, e);
+            log.warn("Failed to deserialize regions from string: {}", str, e);
         }
-        return profiles;
+        return regions;
     }
 }
 

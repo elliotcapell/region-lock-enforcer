@@ -6,12 +6,12 @@ import net.runelite.client.config.ConfigManager;
 import net.runelite.client.ui.PluginPanel;
 
 /**
- * Side panel for managing border profiles.
+ * Side panel for managing regions.
  */
 @Singleton
 public class RegionLockEnforcerPanel extends PluginPanel
 {
-    private final BorderProfileConfigComponent borderComponent;
+    private final RegionConfigComponent borderComponent;
 
     @Inject
     public RegionLockEnforcerPanel(RegionLockEnforcerPlugin plugin, ConfigManager configManager, TeleportRegistry teleportRegistry)
@@ -23,11 +23,11 @@ public class RegionLockEnforcerPanel extends PluginPanel
         setBackground(net.runelite.client.ui.ColorScheme.DARK_GRAY_COLOR);
         // Ensure no default borders are applied
         setOpaque(true);
-        this.borderComponent = new BorderProfileConfigComponent(plugin, configManager, teleportRegistry);
+        this.borderComponent = new RegionConfigComponent(plugin, configManager, teleportRegistry);
         add(borderComponent);
     }
 
-    public BorderProfileConfigComponent getBorderComponent()
+    public RegionConfigComponent getBorderComponent()
     {
         return borderComponent;
     }
