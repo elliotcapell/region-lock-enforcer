@@ -1253,20 +1253,48 @@ public class RegionLockEnforcerPlugin extends Plugin
 
         // Block ALL clicks outside the bordered region (only when inner tiles are computed)
         // Only block within normal surface map bounds (excludes underground, instances, upper/lower floors)
-        // Only block game world actions (WALK, GAME_OBJECT, GROUND_ITEM, NPC, etc.), not UI actions
+        // Only block game world actions (WALK, GAME_OBJECT, GROUND_ITEM, NPC, etc.), not UI actions, player interactions, or "Walk here" on players
         if (wp != null && currentRegion != null && !currentRegion.getInnerTiles().isEmpty())
         {
             // Only apply click blocking within normal surface map bounds
-            if (isWithinSurfaceBounds(wp) && isGameWorldAction(typeId))
+            if (isWithinSurfaceBounds(wp))
             {
-                Set<WorldPoint> clickableTiles = currentRegion.getAllClickableTiles();
-                if (!clickableTiles.contains(wp))
+                // Allow "Walk here" if it's on a player, block it otherwise
+                if (typeId == MenuAction.WALK.getId())
                 {
-                    e.consume();
+                    // Check if there are player actions in the menu (indicates we clicked on a player)
+                    final var entries = client.getMenuEntries();
+                    boolean isOnPlayer = false;
+                    for (var me : entries)
+                    {
+                        if (isPlayerAction(me.getType()))
+                        {
+                            isOnPlayer = true;
+                            break;
+                        }
+                    }
+                    // If not on a player, block "Walk here"
+                    if (!isOnPlayer)
+                    {
+                        Set<WorldPoint> clickableTiles = currentRegion.getAllClickableTiles();
+                        if (!clickableTiles.contains(wp))
+                        {
+                            e.consume();
+                        }
+                    }
+                }
+                // Block other game world actions
+                else if (isGameWorldAction(typeId))
+                {
+                    Set<WorldPoint> clickableTiles = currentRegion.getAllClickableTiles();
+                    if (!clickableTiles.contains(wp))
+                    {
+                        e.consume();
+                    }
                 }
             }
         }
-        // If wp is null or not a game world action, this is a UI click (inventory, chat, etc.) - don't block it
+        // If wp is null or not a game world action, this is a UI click, player interaction, etc. - don't block it
     }
 
     // Also hide walk/interact entries in the menu for marked tiles (clean UX)
@@ -1357,7 +1385,7 @@ public class RegionLockEnforcerPlugin extends Plugin
 
         // Remove ALL menu entries for tiles outside the border (only when inner tiles are computed)
         // Only filter within normal surface map bounds (excludes underground, instances, upper/lower floors)
-        // Whitelist approach: filter everything, then explicitly allow only UI actions
+        // Whitelist approach: filter everything, then explicitly allow only UI actions, player interactions, and "Walk here" on players
         if (hoveredWp != null && !editor.editing && currentRegion != null && !currentRegion.getInnerTiles().isEmpty())
         {
             // Only apply menu filtering within normal surface map bounds
@@ -1366,14 +1394,23 @@ public class RegionLockEnforcerPlugin extends Plugin
                 Set<WorldPoint> clickableTiles = currentRegion.getAllClickableTiles();
                 if (!clickableTiles.contains(hoveredWp))
                 {
-                    // Filter ALL menu entries, then explicitly allow only UI actions
+                    // Check if we're hovering over a player (do this once before filtering)
+                    boolean hoveringOverPlayer = isHoveringOverPlayer(hoveredWp);
+                    
+                    // Filter ALL menu entries, then explicitly allow only UI actions, player interactions, and "Walk here" on players
                     final var entries = client.getMenuEntries();
                     final List<net.runelite.api.MenuEntry> keep = new ArrayList<>(entries.length);
                     
                     for (var me : entries)
                     {
-                        // Whitelist: only keep UI-related actions
-                        if (isUIAction(me.getType()))
+                        MenuAction actionType = me.getType();
+                        // Allow UI actions and player interactions
+                        if (isUIAction(actionType) || isPlayerAction(actionType))
+                        {
+                            keep.add(me);
+                        }
+                        // Allow "Walk here" only if it's targeting a player
+                        else if (actionType == MenuAction.WALK && hoveringOverPlayer)
                         {
                             keep.add(me);
                         }
@@ -1448,7 +1485,62 @@ public class RegionLockEnforcerPlugin extends Plugin
     }
 
     /**
+     * Check if a MenuAction is a player interaction (follow, trade, attack, etc.).
+     */
+    private boolean isPlayerAction(MenuAction actionType)
+    {
+        return actionType == MenuAction.PLAYER_FIRST_OPTION ||
+               actionType == MenuAction.PLAYER_SECOND_OPTION ||
+               actionType == MenuAction.PLAYER_THIRD_OPTION ||
+               actionType == MenuAction.PLAYER_FOURTH_OPTION ||
+               actionType == MenuAction.PLAYER_FIFTH_OPTION ||
+               actionType == MenuAction.PLAYER_SIXTH_OPTION ||
+               actionType == MenuAction.PLAYER_SEVENTH_OPTION ||
+               actionType == MenuAction.PLAYER_EIGHTH_OPTION ||
+               actionType.name().contains("PLAYER");
+    }
+
+    /**
+     * Check if there's a player near the hovered tile location (within 3x3 area).
+     * When you right-click a player, "Walk here" appears in the menu, and we want to allow it.
+     * Returns true if hovering within 1 tile of a player (3x3 area).
+     */
+    private boolean isHoveringOverPlayer(WorldPoint hoveredWp)
+    {
+        if (hoveredWp == null) return false;
+        
+        // Check the scene for players within 1 tile (3x3 area)
+        try
+        {
+            if (client.getPlayers() != null)
+            {
+                for (net.runelite.api.Player player : client.getPlayers())
+                {
+                    if (player != null && player.getWorldLocation() != null)
+                    {
+                        WorldPoint playerWp = player.getWorldLocation();
+                        // Check if player is within 1 tile (3x3 area)
+                        if (playerWp.getPlane() == hoveredWp.getPlane() &&
+                            Math.abs(playerWp.getX() - hoveredWp.getX()) <= 1 &&
+                            Math.abs(playerWp.getY() - hoveredWp.getY()) <= 1)
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            // getPlayers() might throw exceptions in some cases, ignore them
+        }
+        
+        return false;
+    }
+
+    /**
      * Check if a menu action type is a game world action (walk, interact with objects/NPCs/items).
+     * Note: Player interactions (PLAYER_*, FOLLOW, TRADE, etc.) are explicitly excluded and will not be blocked.
      */
     private boolean isGameWorldAction(int typeId)
     {
@@ -1468,6 +1560,7 @@ public class RegionLockEnforcerPlugin extends Plugin
                typeId == MenuAction.NPC_THIRD_OPTION.getId() ||
                typeId == MenuAction.NPC_FOURTH_OPTION.getId() ||
                typeId == MenuAction.NPC_FIFTH_OPTION.getId();
+        // Player actions (PLAYER_*, FOLLOW, TRADE, etc.) are NOT included here, so they won't be blocked
     }
 
     /**
