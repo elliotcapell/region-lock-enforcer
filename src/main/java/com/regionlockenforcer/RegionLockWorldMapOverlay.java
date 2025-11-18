@@ -286,49 +286,23 @@ public class RegionLockWorldMapOverlay extends Overlay
 
         clientThread.invoke(() ->
         {
-            // Check if world map is open
-            Widget map = client.getWidget(ComponentID.WORLD_MAP_MAPVIEW);
-            if (map == null || map.isHidden())
+            WorldMapRenderContext context = buildWorldMapRenderContext();
+            if (context == null)
             {
                 return;
             }
 
-            Rectangle mapBounds = map.getBounds();
-            if (mapBounds == null)
+            Rectangle mapBounds = context.getMapBounds();
+            if (mapBounds == null || !mapBounds.contains(finalMousePoint))
             {
                 return;
             }
 
-            // Check if click is within map bounds
-            if (!mapBounds.contains(finalMousePoint))
+            WorldPoint worldPoint = screenToWorldPoint(finalMousePoint, context);
+            if (worldPoint == null)
             {
                 return;
             }
-
-            // Convert mouse coordinates to world coordinates using WorldMap API
-            WorldMap worldMap = client.getWorldMap();
-            if (worldMap == null)
-            {
-                return;
-            }
-
-            float pixelsPerTile = worldMap.getWorldMapZoom();
-            net.runelite.api.Point worldMapPosition = worldMap.getWorldMapPosition();
-            
-            // Get relative point within map bounds
-            Point relativePoint = new Point(finalMousePoint.x - mapBounds.x, finalMousePoint.y - mapBounds.y);
-            
-            // Calculate world coordinates from mouse position
-            int widthInTiles = (int) Math.ceil(mapBounds.getWidth() / pixelsPerTile);
-            int heightInTiles = (int) Math.ceil(mapBounds.getHeight() / pixelsPerTile);
-            
-            int xTileOffset = (int) (relativePoint.x / pixelsPerTile) - widthInTiles / 2;
-            int yTileOffset = heightInTiles / 2 - (int) (relativePoint.y / pixelsPerTile);
-            
-            int worldX = (int)worldMapPosition.getX() + xTileOffset;
-            int worldY = (int)worldMapPosition.getY() + yTileOffset;
-            
-            WorldPoint worldPoint = new WorldPoint(worldX, worldY, 0);
 
             // Convert to chunk coordinates
             int baseX = floorToMultiple(worldPoint.getX(), tileGroupSize);
@@ -341,8 +315,9 @@ public class RegionLockWorldMapOverlay extends Overlay
                 return;
             }
 
-            // Toggle chunk: add if not fully contained, remove if fully contained
-            if (currentProfile.isAreaFullyContained(baseX, baseY, plane, tileGroupSize))
+            boolean areaHasTiles = currentProfile.hasAnyTileInArea(baseX, baseY, plane, tileGroupSize);
+
+            if (areaHasTiles)
             {
                 currentProfile.removeArea(baseX, baseY, plane, tileGroupSize);
             }
@@ -398,6 +373,48 @@ public class RegionLockWorldMapOverlay extends Overlay
         }
 
         return new WorldMapRenderContext(mapBounds, pixelsPerTile, worldMapPosition);
+    }
+
+    private WorldPoint screenToWorldPoint(Point screenPoint, WorldMapRenderContext context)
+    {
+        Rectangle mapBounds = context.getMapBounds();
+        float pixelsPerTile = context.getPixelsPerTile();
+        net.runelite.api.Point worldMapPosition = context.getWorldMapPosition();
+
+        if (pixelsPerTile <= 0 || mapBounds == null || worldMapPosition == null)
+        {
+            return null;
+        }
+
+        int widthInTiles = (int)Math.ceil(mapBounds.getWidth() / pixelsPerTile);
+        int heightInTiles = (int)Math.ceil(mapBounds.getHeight() / pixelsPerTile);
+
+        double xTileOffset = (screenPoint.x - mapBounds.getX()) / pixelsPerTile;
+        double yTileOffsetFromTop = (mapBounds.getHeight() - 1 - (screenPoint.y - mapBounds.getY())) / pixelsPerTile;
+
+        int xIndex = clamp((int)Math.floor(xTileOffset), 0, Math.max(0, widthInTiles - 1));
+        int yIndex = clamp((int)Math.floor(yTileOffsetFromTop), 0, Math.max(0, heightInTiles - 1));
+
+        int xTileMin = (int)worldMapPosition.getX() - widthInTiles / 2;
+        int yTileMin = worldMapPosition.getY() - heightInTiles / 2;
+
+        int worldX = xTileMin + xIndex;
+        int worldY = yTileMin + yIndex;
+
+        return new WorldPoint(worldX, worldY, 0);
+    }
+
+    private int clamp(int value, int min, int max)
+    {
+        if (value < min)
+        {
+            return min;
+        }
+        if (value > max)
+        {
+            return max;
+        }
+        return value;
     }
 
     private int getGridSize()

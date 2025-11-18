@@ -210,6 +210,19 @@ public class RegionConfigComponent extends JPanel
         return button;
     }
 
+    private String ellipsize(String text, int maxLength)
+    {
+        if (text == null)
+        {
+            return "";
+        }
+        if (maxLength < 4 || text.length() <= maxLength)
+        {
+            return text;
+        }
+        return text.substring(0, maxLength - 3) + "...";
+    }
+
     private void createNewRegion()
     {
         String name = JOptionPane.showInputDialog(
@@ -326,8 +339,8 @@ public class RegionConfigComponent extends JPanel
     {
         int result = JOptionPane.showConfirmDialog(
             this,
-            "Are you sure you want to delete the region '" + regionName + "'?\n" +
-            "This will delete the region, its border, and all associated settings.",
+            "Delete the region '" + regionName + "'?\n" +
+            "This will only remove it from RuneLite. The JSON file remains untouched.",
             "Delete Region",
             JOptionPane.YES_NO_OPTION,
             JOptionPane.WARNING_MESSAGE
@@ -387,11 +400,11 @@ public class RegionConfigComponent extends JPanel
             // Shape cannot be processed - show error and keep in edit mode
             JOptionPane.showMessageDialog(
                 this,
-                "Unable to process this border shape.\n\n" +
-                "The marked tiles do not form a valid closed region.\n" +
-                "Please adjust your border to create a properly enclosed area.",
-                "Invalid Border Shape",
-                JOptionPane.ERROR_MESSAGE
+                "Border must be fully enclosed before it can be finished.\n\n" +
+                "Close every gap so the outline surrounds a complete area,\n" +
+                "then click Finish again.",
+                "Border Is Not Fully Bounded",
+                JOptionPane.WARNING_MESSAGE
             );
             // Keep editing mode enabled (inner tiles are already cleared by computeInnerTiles)
             plugin.saveRegions();
@@ -554,7 +567,11 @@ public class RegionConfigComponent extends JPanel
                 ));
 
                 // Border name label (show region name, not border name)
-                JLabel nameLabel = new JLabel(currentProfile.getName());
+                String regionName = currentProfile.getName();
+                boolean hasInnerTiles = !currentProfile.getInnerTiles().isEmpty();
+                int maxChars = hasInnerTiles ? 26 : 20; // fewer chars when buttons occupy more space
+                JLabel nameLabel = new JLabel(ellipsize(regionName, maxChars));
+                nameLabel.setToolTipText(regionName);
                 nameLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
                 borderItemPanel.add(nameLabel, BorderLayout.WEST);
 
@@ -563,8 +580,6 @@ public class RegionConfigComponent extends JPanel
                 buttonPanel.setLayout(new BoxLayout(buttonPanel, BoxLayout.X_AXIS));
                 buttonPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
                 buttonPanel.setOpaque(false);
-                
-                boolean hasInnerTiles = !currentProfile.getInnerTiles().isEmpty();
                 
                 if (hasInnerTiles)
                 {
@@ -659,7 +674,9 @@ public class RegionConfigComponent extends JPanel
                     ));
 
                     // Region name label (clickable to select)
-                    JLabel nameLabel = new JLabel(profile.getName());
+                    String regionName = profile.getName();
+                JLabel nameLabel = new JLabel(ellipsize(regionName, 32));
+                    nameLabel.setToolTipText(regionName);
                     nameLabel.setForeground(
                         profile == currentProfile 
                             ? ColorScheme.BRAND_ORANGE 

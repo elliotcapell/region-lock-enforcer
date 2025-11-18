@@ -309,5 +309,35 @@ public class Region
     {
         return isAreaFullyContained(chunkX * 64, chunkY * 64, plane, 64);
     }
+
+    /**
+     * Check if any boundary tile exists within the specified square area.
+     *
+     * @param startX lower-left tile X coordinate
+     * @param startY lower-left tile Y coordinate
+     * @param plane plane to inspect
+     * @param size width/height of the square
+     * @return true if at least one marked tile exists in the area
+     */
+    public boolean hasAnyTileInArea(int startX, int startY, int plane, int size)
+    {
+        if (size <= 0)
+        {
+            return false;
+        }
+
+        for (int x = 0; x < size; x++)
+        {
+            for (int y = 0; y < size; y++)
+            {
+                WorldPoint tile = new WorldPoint(startX + x, startY + y, plane);
+                if (boundaryTiles.contains(tile))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 }
 

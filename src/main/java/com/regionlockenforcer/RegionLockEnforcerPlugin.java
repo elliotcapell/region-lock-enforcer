@@ -200,7 +200,7 @@ public class RegionLockEnforcerPlugin extends Plugin
      * Remove HTML color tags from a string.
      */
     private String cleanTarget(String target)
-    {
+            {
         return target != null ? target.replaceAll("<col=[^>]*>", "").replaceAll("</col>", "") : null;
     }
 
@@ -210,10 +210,10 @@ public class RegionLockEnforcerPlugin extends Plugin
     private boolean isJewelleryBoxCategory(String category)
     {
         return category.equals("Ring of dueling") ||
-               category.equals("Games necklace") ||
-               category.equals("Combat bracelet") ||
-               category.equals("Skills necklace") ||
-               category.equals("Amulet of glory") ||
+                        category.equals("Games necklace") ||
+                        category.equals("Combat bracelet") ||
+                        category.equals("Skills necklace") ||
+                        category.equals("Amulet of glory") ||
                category.equals("Ring of wealth");
     }
 
@@ -228,7 +228,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
         {
             if (option.equalsIgnoreCase(teleport.getName()) && targetMatchesSimple(targetClean, teleport))
-            {
+        {
                 return teleport;
             }
         }
@@ -243,16 +243,16 @@ public class RegionLockEnforcerPlugin extends Plugin
         if (option == null || targetClean == null) return false;
         if (!option.equalsIgnoreCase("Teleport") && !option.equalsIgnoreCase("Rub")) return false;
         
-        for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
-        {
+                    for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
+                    {
             if (teleport.getMenuTarget() != null)
-            {
-                String targetLower = targetClean.toLowerCase();
-                String menuTargetLower = teleport.getMenuTarget().toLowerCase();
+                            {
+                                String targetLower = targetClean.toLowerCase();
+                                String menuTargetLower = teleport.getMenuTarget().toLowerCase();
                 if (targetLower.contains(menuTargetLower))
                 {
                     return true;
-                }
+                            }
             }
         }
         return false;
@@ -262,7 +262,7 @@ public class RegionLockEnforcerPlugin extends Plugin
      * Check if any teleport for the given target item is whitelisted.
      */
     private boolean hasAnyWhitelistedTeleport(String targetClean, Set<String> whitelist)
-    {
+                            {
         if (targetClean == null) return false;
         
         String targetLower = targetClean.toLowerCase();
@@ -272,7 +272,7 @@ public class RegionLockEnforcerPlugin extends Plugin
             {
                 String menuTargetLower = teleport.getMenuTarget().toLowerCase();
                 if (targetLower.contains(menuTargetLower) && whitelist.contains(teleport.getId()))
-                {
+                            {
                     return true;
                 }
             }
@@ -286,9 +286,9 @@ public class RegionLockEnforcerPlugin extends Plugin
     private TeleportDefinition findSubmenuTeleport(String option, String targetClean)
     {
         if (option == null) return null;
-        
+                
         for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
-        {
+                {
             if (option.equalsIgnoreCase(teleport.getName()) && targetMatchesSubmenu(targetClean, teleport))
             {
                 return teleport;
@@ -301,7 +301,7 @@ public class RegionLockEnforcerPlugin extends Plugin
     public void onClientTick(ClientTick t)
     {
         if (client.getGameState() != GameState.LOGGED_IN) return;
-        
+                    
         // Filter jewellery box widgets if interface is open
         Set<String> whitelist = getTeleportWhitelist();
         if (whitelist != null)
@@ -311,8 +311,8 @@ public class RegionLockEnforcerPlugin extends Plugin
             {
                 // Build map of teleport names to IDs for jewellery box items
                 java.util.Map<String, String> teleportNameToId = new java.util.HashMap<>();
-                for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
-                {
+                        for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
+                        {
                     if (isJewelleryBoxCategory(teleport.getCategory()))
                     {
                         teleportNameToId.put(Text.standardize(teleport.getName()), teleport.getId());
@@ -326,7 +326,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         
         // Filter charter ship interface if open
         if (whitelist != null)
-        {
+                                {
             filterCharterShipInterface();
         }
         
@@ -341,17 +341,17 @@ public class RegionLockEnforcerPlugin extends Plugin
                 String option = me.getOption();
                 String targetClean = cleanTarget(me.getTarget());
                 TeleportDefinition matchedTeleport = findMatchingTeleport(option, targetClean);
-                
-                // Keep if it's whitelisted or not a teleport destination entry
+                    
+                    // Keep if it's whitelisted or not a teleport destination entry
                 if (matchedTeleport == null || whitelist.contains(matchedTeleport.getId()))
-                {
-                    keep.add(me);
+                    {
+                        keep.add(me);
+                    }
                 }
-            }
-            
-            if (keep.size() != entries.length)
-            {
-                client.setMenuEntries(keep.toArray(new net.runelite.api.MenuEntry[0]));
+                
+                if (keep.size() != entries.length)
+                {
+                    client.setMenuEntries(keep.toArray(new net.runelite.api.MenuEntry[0]));
             }
         }
     }
@@ -708,13 +708,13 @@ public class RegionLockEnforcerPlugin extends Plugin
         if (destinationName != null && !destinationName.isEmpty())
         {
             String standardizedName = Text.standardize(destinationName);
-            for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
-            {
+        for (TeleportDefinition teleport : teleportRegistry.getAllTeleports())
+        {
                 if (teleport.getCategory().equals("Charter Ships") &&
                     Text.standardize(teleport.getName()).equals(standardizedName) &&
                     whitelist.contains(teleport.getId()))
-                {
-                    isWhitelisted = true;
+                    {
+                        isWhitelisted = true;
                     break;
                 }
             }
@@ -1275,14 +1275,14 @@ public class RegionLockEnforcerPlugin extends Plugin
                     }
                     // If not on a player, block "Walk here"
                     if (!isOnPlayer)
-                    {
+                {
                         Set<WorldPoint> clickableTiles = currentRegion.getAllClickableTiles();
-                        if (!clickableTiles.contains(wp))
-                        {
-                            e.consume();
-                        }
+                    if (!clickableTiles.contains(wp))
+                    {
+            e.consume();
                     }
                 }
+            }
                 // Block other game world actions
                 else if (isGameWorldAction(typeId))
                 {
@@ -1323,7 +1323,7 @@ public class RegionLockEnforcerPlugin extends Plugin
                 TeleportDefinition matchedTeleport = findSubmenuTeleport(option, targetClean);
                 
                 if (matchedTeleport != null)
-                {
+                        {
                     // Submenu destination entry - keep if whitelisted
                     if (whitelist.contains(matchedTeleport.getId()))
                     {
@@ -1373,7 +1373,7 @@ public class RegionLockEnforcerPlugin extends Plugin
                 
                 if (!shouldBlock)
                 {
-                    keep.add(me);
+                keep.add(me);
                 }
             }
             
@@ -1517,7 +1517,7 @@ public class RegionLockEnforcerPlugin extends Plugin
                 for (net.runelite.api.Player player : client.getPlayers())
                 {
                     if (player != null && player.getWorldLocation() != null)
-                    {
+    {
                         WorldPoint playerWp = player.getWorldLocation();
                         // Check if player is within 1 tile (3x3 area)
                         if (playerWp.getPlane() == hoveredWp.getPlane() &&
@@ -1606,7 +1606,7 @@ public class RegionLockEnforcerPlugin extends Plugin
     private boolean targetMatchesWithSpecialCases(String effectiveTarget, String teleportTarget)
     {
         boolean targetMatches = teleportTarget.isEmpty() || (effectiveTarget != null && effectiveTarget.equals(teleportTarget));
-        
+            
         // Special case: Amulet of glory teleports also match "Amulet of eternal glory"
         if (!targetMatches && teleportTarget.equals("amulet of glory") && effectiveTarget != null)
         {
@@ -1634,7 +1634,7 @@ public class RegionLockEnforcerPlugin extends Plugin
      * Check if target matches teleport for submenu entries (target contains item name OR matches destination name).
      */
     private boolean targetMatchesSubmenu(String targetClean, TeleportDefinition teleport)
-    {
+        {
         if (targetClean == null || targetClean.isEmpty())
         {
             // Target is empty - this could be a submenu entry
@@ -2001,139 +2001,200 @@ public class RegionLockEnforcerPlugin extends Plugin
 
 
     /**
-     * Compute all inner tiles (tiles inside the boundary) using flood-fill.
-     * This is a one-time computation that saves all inner tiles to the profile.
-     * If the shape is not closed, it will automatically close it first.
-     * 
-     * @param profile The border profile to compute inner tiles for
-     * @return true if computation was successful, false if the shape cannot be processed
+     * Compute all inner tiles (tiles inside the boundary) using an exterior flood fill.
+     * This enforces that the user draws a fully bounded shape.
+     *
+     * @param profile The region to compute inner tiles for
+     * @return true if computation was successful, false if the border is not fully enclosed
      */
     public boolean computeInnerTiles(Region profile)
     {
-        if (profile == null || profile.getBoundaryTiles().isEmpty())
+        if (profile == null)
         {
-            if (profile != null)
-            {
-                profile.setInnerTiles(new HashSet<>());
-            }
-            return true;
+            return false;
         }
 
         Set<WorldPoint> boundaryTiles = profile.getBoundaryTiles();
-        if (boundaryTiles.isEmpty()) return true;
-        
-        // Get the plane from first boundary tile (assume all are on same plane)
-        int plane = boundaryTiles.iterator().next().getPlane();
-
-        // Filter boundary tiles to the same plane
-        Set<WorldPoint> samePlaneBoundary = boundaryTiles.stream()
-            .filter(bp -> bp.getPlane() == plane)
-            .collect(java.util.stream.Collectors.toSet());
-        
-        if (samePlaneBoundary.isEmpty()) return true;
-
-        // Compute the rectilinear convex hull
-        // This fills all tiles in the bounding box of the marked tiles, creating a closed shape.
-        // The hull includes:
-        // 1. All marked tiles (they're clickable)
-        // 2. All tiles that fill gaps to create the minimal axis-aligned enclosure
-        // 
-        // For already-closed/filled shapes, the hull is idempotent (no change).
-        // For unclosed shapes, it fills gaps to create the minimal enclosure.
-        computeConvexHull(profile, samePlaneBoundary, plane);
-        Set<WorldPoint> hullTiles = profile.getBoundaryTiles();
-        
-        // All tiles in the convex hull are inner tiles (they're all clickable)
-        // The hull already includes all marked tiles plus any gaps that were filled
-        profile.setInnerTiles(new HashSet<>(hullTiles));
-        
-        // Filter boundary tiles to only include tiles that have border lines (outer edges)
-        // A tile has a border line if at least one of its 4 neighbors is outside
-        Set<WorldPoint> borderTiles = new HashSet<>();
-        for (WorldPoint tile : hullTiles)
+        if (boundaryTiles.isEmpty())
         {
-            if (hasOuterEdge(tile, hullTiles, plane))
+            profile.setInnerTiles(new HashSet<>());
+            return false;
+        }
+
+        int plane = boundaryTiles.iterator().next().getPlane();
+        Set<WorldPoint> samePlaneBoundary = boundaryTiles.stream()
+            .filter(tile -> tile.getPlane() == plane)
+            .collect(java.util.stream.Collectors.toSet());
+
+        if (samePlaneBoundary.isEmpty())
+        {
+            profile.setInnerTiles(new HashSet<>());
+            return false;
+        }
+
+        Set<WorldPoint> innerTiles = computeInteriorTiles(samePlaneBoundary, plane);
+        if (innerTiles.isEmpty())
+        {
+            profile.setInnerTiles(new HashSet<>());
+            return false;
+        }
+
+        profile.setInnerTiles(innerTiles);
+
+        Set<WorldPoint> solidTiles = new HashSet<>(innerTiles);
+        solidTiles.addAll(samePlaneBoundary);
+
+        Set<WorldPoint> borderTiles = new HashSet<>();
+        for (WorldPoint tile : samePlaneBoundary)
+        {
+            if (hasOuterEdge(tile, solidTiles, plane))
             {
                 borderTiles.add(tile);
             }
         }
-        
-        // Update boundary tiles to only include tiles with border lines
+
         profile.getBoundaryTiles().clear();
         profile.getBoundaryTiles().addAll(borderTiles);
-        
+
         return true;
     }
 
-    /**
-     * Compute the rectilinear (orthogonal) convex hull of the marked tiles.
-     * This finds the minimal axis-aligned enclosure of the marked tiles.
-     * 
-     * This is always called to guarantee a closed boundary, regardless of whether
-     * the user's marked tiles form a closed shape or not. For already-closed shapes,
-     * the hull is idempotent (no change).
-     * 
-     * Algorithm:
-     * 1. For each row (y) with marked tiles, fill from min_x to max_x (horizontal close)
-     * 2. For each column (x) with marked tiles, fill from min_y to max_y (vertical close)
-     * 3. Take the union of these filled tiles
-     * 
-     * This yields the smallest-area, axis-aligned enclosure of the given tiles.
-     */
-    private void computeConvexHull(Region profile, Set<WorldPoint> markedTiles, int plane)
+    private Set<WorldPoint> computeInteriorTiles(Set<WorldPoint> boundaryTiles, int plane)
     {
-        if (markedTiles.isEmpty()) return;
-        
-        // Step 1: Compute row spans (horizontal close) and column spans (vertical close)
-        java.util.Map<Integer, int[]> rows = new java.util.HashMap<>(); // y -> [minX, maxX]
-        java.util.Map<Integer, int[]> cols = new java.util.HashMap<>(); // x -> [minY, maxY]
-        
-        for (WorldPoint bp : markedTiles)
+        if (boundaryTiles.isEmpty())
         {
-            int x = bp.getX();
-            int y = bp.getY();
-            
-            // Update row span
-            rows.compute(y, (key, span) -> {
-                if (span == null) return new int[]{x, x};
-                if (x < span[0]) span[0] = x;
-                if (x > span[1]) span[1] = x;
-                return span;
-            });
-            
-            // Update column span
-            cols.compute(x, (key, span) -> {
-                if (span == null) return new int[]{y, y};
-                if (y < span[0]) span[0] = y;
-                if (y > span[1]) span[1] = y;
-                return span;
-            });
+            return java.util.Collections.emptySet();
         }
-        
-        // Step 2: Fill horizontal spans (row by row) and vertical spans (column by column)
-        Set<WorldPoint> hullTiles = new HashSet<>();
-        
-        // Fill horizontal spans
-        rows.forEach((y, span) -> {
-            for (int x = span[0]; x <= span[1]; x++)
+
+        int minX = boundaryTiles.stream().mapToInt(WorldPoint::getX).min().orElse(0);
+        int maxX = boundaryTiles.stream().mapToInt(WorldPoint::getX).max().orElse(0);
+        int minY = boundaryTiles.stream().mapToInt(WorldPoint::getY).min().orElse(0);
+        int maxY = boundaryTiles.stream().mapToInt(WorldPoint::getY).max().orElse(0);
+
+        int padMinX = minX - 1;
+        int padMaxX = maxX + 1;
+        int padMinY = minY - 1;
+        int padMaxY = maxY + 1;
+
+        int width = padMaxX - padMinX + 1;
+        int height = padMaxY - padMinY + 1;
+
+        if (width <= 2 || height <= 2)
+        {
+            return java.util.Collections.emptySet();
+        }
+
+        Set<Long> boundaryKeys = boundaryTiles.stream()
+            .map(tile -> tileKey(tile.getX(), tile.getY()))
+            .collect(java.util.stream.Collectors.toSet());
+
+        boolean[][] outside = new boolean[width][height];
+        java.util.ArrayDeque<int[]> queue = new java.util.ArrayDeque<>();
+
+        for (int x = 0; x < width; x++)
+        {
+            tryQueueOutside(queue, outside, boundaryKeys, padMinX, padMinY, x, 0);
+            tryQueueOutside(queue, outside, boundaryKeys, padMinX, padMinY, x, height - 1);
+        }
+        for (int y = 1; y < height - 1; y++)
+        {
+            tryQueueOutside(queue, outside, boundaryKeys, padMinX, padMinY, 0, y);
+            tryQueueOutside(queue, outside, boundaryKeys, padMinX, padMinY, width - 1, y);
+        }
+
+        final int[][] directions = new int[][]{
+            {1, 0},
+            {-1, 0},
+            {0, 1},
+            {0, -1}
+        };
+
+        while (!queue.isEmpty())
+        {
+            int[] cell = queue.removeFirst();
+            for (int[] dir : directions)
             {
-                hullTiles.add(new WorldPoint(x, y, plane));
+                int nx = cell[0] + dir[0];
+                int ny = cell[1] + dir[1];
+
+                if (nx < 0 || ny < 0 || nx >= width || ny >= height)
+                {
+                    continue;
+                }
+
+                if (outside[nx][ny])
+                {
+                    continue;
+                }
+
+                int worldX = padMinX + nx;
+                int worldY = padMinY + ny;
+
+                if (boundaryKeys.contains(tileKey(worldX, worldY)))
+                {
+                    continue;
+                }
+
+                outside[nx][ny] = true;
+                queue.addLast(new int[]{nx, ny});
             }
-        });
-        
-        // Fill vertical spans
-        cols.forEach((x, span) -> {
-            for (int y = span[0]; y <= span[1]; y++)
+        }
+
+        Set<WorldPoint> innerTiles = new HashSet<>();
+        for (int worldX = padMinX + 1; worldX <= padMaxX - 1; worldX++)
+        {
+            for (int worldY = padMinY + 1; worldY <= padMaxY - 1; worldY++)
             {
-                hullTiles.add(new WorldPoint(x, y, plane));
+                int offsetX = worldX - padMinX;
+                int offsetY = worldY - padMinY;
+                if (outside[offsetX][offsetY])
+                {
+                    continue;
+                }
+
+                long key = tileKey(worldX, worldY);
+                if (boundaryKeys.contains(key))
+                {
+                    continue;
+                }
+
+                innerTiles.add(new WorldPoint(worldX, worldY, plane));
             }
-        });
-        
-        // Step 5: Replace profile's boundary tiles with the convex hull
-        // Clear existing boundary tiles and set to hull tiles
-        // This ensures we always have a closed boundary
-        profile.getBoundaryTiles().clear();
-        profile.getBoundaryTiles().addAll(hullTiles);
+        }
+
+        return innerTiles;
+    }
+
+    private void tryQueueOutside(java.util.ArrayDeque<int[]> queue, boolean[][] outside, Set<Long> boundaryKeys,
+                                 int baseX, int baseY, int idxX, int idxY)
+    {
+        if (idxX < 0 || idxY < 0 || idxX >= outside.length || idxY >= outside[0].length)
+        {
+            return;
+        }
+
+        if (outside[idxX][idxY])
+        {
+            return;
+        }
+
+        int worldX = baseX + idxX;
+        int worldY = baseY + idxY;
+
+        if (boundaryKeys.contains(tileKey(worldX, worldY)))
+        {
+            return;
+        }
+
+        outside[idxX][idxY] = true;
+        queue.addLast(new int[]{idxX, idxY});
+    }
+
+    private long tileKey(int x, int y)
+    {
+        long keyX = ((long)x & 0xFFFFFFFFL) << 32;
+        long keyY = ((long)y & 0xFFFFFFFFL);
+        return keyX | keyY;
     }
 
     /**
@@ -2145,13 +2206,21 @@ public class RegionLockEnforcerPlugin extends Plugin
      */
     public boolean exportRegion(Region profile, String filePath)
     {
+        if (profile == null || filePath == null || filePath.isEmpty())
+        {
+            return false;
+        }
+
+        String derivedName = deriveRegionNameFromPath(filePath);
+        String exportName = derivedName != null ? derivedName : profile.getName();
+
         try (java.io.FileWriter writer = new java.io.FileWriter(filePath))
         {
             Gson prettyGson = gson.newBuilder().setPrettyPrinting().create();
             
             // Create a serializable version of the profile
             RegionExport exportData = new RegionExport();
-            exportData.name = profile.getName();
+            exportData.name = exportName;
             exportData.boundaryTiles = profile.getBoundaryTiles().stream()
                 .map(wp -> new TileData(wp.getX(), wp.getY(), wp.getPlane()))
                 .collect(java.util.stream.Collectors.toList());
@@ -2162,13 +2231,21 @@ public class RegionLockEnforcerPlugin extends Plugin
                 profile.getTeleportWhitelist() != null ? profile.getTeleportWhitelist() : java.util.Collections.emptySet());
             
             prettyGson.toJson(exportData, writer);
-            return true;
         }
         catch (Exception e)
         {
             log.error("Failed to export region", e);
             return false;
         }
+
+        if (derivedName != null && !derivedName.equals(profile.getName()))
+        {
+            profile.setName(derivedName);
+            saveRegions();
+            notifyRegionsChanged();
+        }
+
+        return true;
     }
 
     /**
@@ -2179,13 +2256,28 @@ public class RegionLockEnforcerPlugin extends Plugin
      */
     public Region importRegion(String filePath)
     {
+        if (filePath == null || filePath.isEmpty())
+        {
+            return null;
+        }
+
         try (java.io.FileReader reader = new java.io.FileReader(filePath))
         {
             RegionExport exportData = gson.fromJson(reader, RegionExport.class);
             
-            if (exportData == null || exportData.name == null) return null;
+            if (exportData == null)
+            {
+                return null;
+            }
+
+            String derivedName = deriveRegionNameFromPath(filePath);
+            String regionName = derivedName != null ? derivedName : exportData.name;
+            if (regionName == null || regionName.trim().isEmpty())
+            {
+                regionName = "Imported Region";
+            }
             
-            Region profile = new Region(exportData.name);
+            Region profile = new Region(regionName);
             
             // Convert tile data back to WorldPoints
             Set<WorldPoint> boundaryTiles = exportData.boundaryTiles != null
@@ -2211,6 +2303,34 @@ public class RegionLockEnforcerPlugin extends Plugin
         catch (Exception e)
         {
             log.error("Failed to import region", e);
+            return null;
+        }
+    }
+
+    private String deriveRegionNameFromPath(String filePath)
+    {
+        try
+        {
+            java.nio.file.Path path = java.nio.file.Paths.get(filePath);
+            java.nio.file.Path fileName = path.getFileName();
+            if (fileName == null)
+            {
+                return null;
+            }
+
+            String baseName = fileName.toString();
+            int dotIndex = baseName.lastIndexOf('.');
+            if (dotIndex > 0)
+            {
+                baseName = baseName.substring(0, dotIndex);
+            }
+
+            baseName = baseName.trim();
+            return baseName.isEmpty() ? null : baseName;
+        }
+        catch (Exception e)
+        {
+            log.debug("Failed to derive region name from path {}", filePath, e);
             return null;
         }
     }
