@@ -1981,7 +1981,23 @@ public class RegionLockEnforcerPlugin extends Plugin
      */
     private boolean isWithinSurfaceBounds(WorldPoint wp)
     {
-        if (wp == null) return false;
+        if (wp == null)
+        {
+            return false;
+        }
+
+        // Only block clicks on the main surface plane (plane 0).
+        // Upstairs floors (plane > 0) and underground/instance floors (plane != 0) are exempt.
+        if (wp.getPlane() != 0)
+        {
+            return false;
+        }
+
+        // Instanced regions (raids, dungeons, POH, etc.) should never be blocked.
+        if (client.isInInstancedRegion())
+        {
+            return false;
+        }
         
         // Normal OSRS surface map bounds
         // Map is 3008 tiles wide (47 chunks × 64) and 2112 tiles tall (33 chunks × 64)
