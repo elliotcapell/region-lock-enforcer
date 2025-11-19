@@ -23,7 +23,7 @@ Open the sidebar panel to either create a new region, or import an existing one.
     - Shift click a marked tile to un-mark it
     - You can also do this on the world map, where it will mark grids that you can configure the size of in settings
     - Press your Toggle Editor Hotkey to exit/enter editing mode at will
-- When you are done, click 'Finish', and the program will automatically draw your border on the outer perimeter of your marked tiles. If you did not mark a fully enclosed shape, it will smart-complete it
+- When you are done, click 'Finish', and the program will automatically draw your border on the outer perimeter of your marked tiles. You must draw a fully enclosed shape.
 - You can edit a previously 'Finished' border by clicking the edit icon in the side panel
 
 #### To define a teleports whitelist:
