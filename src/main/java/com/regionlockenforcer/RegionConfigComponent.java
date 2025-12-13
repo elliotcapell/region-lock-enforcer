@@ -5,8 +5,9 @@ import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
+import java.awt.Color;
+import java.awt.GridLayout;
 import java.awt.event.MouseAdapter;
-import java.awt.image.BufferedImage;
 import java.util.List;
 import java.util.function.Supplier;
 import javax.swing.BorderFactory;
@@ -21,10 +22,19 @@ import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.JCheckBox;
+import javax.swing.JDialog;
+import javax.swing.JRadioButton;
+import javax.swing.ButtonGroup;
+import javax.swing.JScrollPane;
+import javax.swing.JSlider;
+import java.awt.image.BufferedImage;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.util.ImageUtil;
+import javax.swing.JToggleButton;
+import com.regionlockenforcer.Border.RenderMode;
+import com.regionlockenforcer.RegionLockEnforcerConfig.PropStyle;
 
 /**
  * Custom config component for managing regions.
@@ -38,12 +48,13 @@ public class RegionConfigComponent extends JPanel
     private final JPanel borderListPanel;
     private final JPanel teleportsPanel;
     private final JPanel regionListPanel;
-    private final JButton createButton;
     private final JButton importButton;
     private final JButton exportRegionButton;
     private final ImageIcon editIcon;
-    private final ImageIcon resetIcon;
     private final ImageIcon deleteIcon;
+    private final ImageIcon addIcon;
+    private final ImageIcon propsIcon;
+    private Border styleDialogBorderHighlight = null;
 
     public RegionConfigComponent(RegionLockEnforcerPlugin plugin, @SuppressWarnings("unused") ConfigManager configManager, TeleportRegistry teleportRegistry)
     {
@@ -56,10 +67,11 @@ public class RegionConfigComponent extends JPanel
         setBorder(BorderFactory.createEmptyBorder(5, 0, 5, 0));
         setOpaque(true);
         this.editIcon = loadIcon("/edit_icon.png", this::createFallbackEditIcon);
-        this.resetIcon = loadIcon("/reset_icon.png", this::createFallbackRefreshIcon);
         this.deleteIcon = loadIcon("/delete_icon.png", this::createFallbackDeleteIcon);
+        this.addIcon = loadIcon("/add_icon.png", this::createFallbackAddIcon);
+        this.propsIcon = loadIcon("/theme_icon.png", this::createFallbackPropsIcon);
 
-        // Top buttons panel - Create New Region, Import Region, Export Region (stacked vertically)
+        // Top buttons panel - Import Region, Export Region (stacked vertically)
         JPanel topButtonPanel = new JPanel();
         topButtonPanel.setLayout(new BoxLayout(topButtonPanel, BoxLayout.Y_AXIS));
         topButtonPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -67,21 +79,10 @@ public class RegionConfigComponent extends JPanel
         
         // Create buttons with consistent styling
         Dimension buttonSize = new Dimension(180, 30);
-        createButton = createStyledButton("Create New Region", buttonSize, e -> createNewRegion());
         importButton = createStyledButton("Import Region", buttonSize, e -> importRegion());
         exportRegionButton = createStyledButton("Export Region", buttonSize, e -> exportCurrentRegion());
         
         // Center buttons horizontally
-        JPanel createButtonPanel = new JPanel();
-        createButtonPanel.setLayout(new BoxLayout(createButtonPanel, BoxLayout.X_AXIS));
-        createButtonPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
-        createButtonPanel.add(Box.createHorizontalGlue());
-        createButtonPanel.add(createButton);
-        createButtonPanel.add(Box.createHorizontalGlue());
-        topButtonPanel.add(createButtonPanel);
-        
-        topButtonPanel.add(Box.createVerticalStrut(5));
-        
         JPanel importButtonPanel = new JPanel();
         importButtonPanel.setLayout(new BoxLayout(importButtonPanel, BoxLayout.X_AXIS));
         importButtonPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -147,7 +148,7 @@ public class RegionConfigComponent extends JPanel
         borderLabelPanel.setLayout(new BoxLayout(borderLabelPanel, BoxLayout.X_AXIS));
         borderLabelPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
         borderLabelPanel.setBorder(BorderFactory.createEmptyBorder(15, 0, 5, 0));
-        JLabel borderSectionLabel = new JLabel("Draw Border");
+        JLabel borderSectionLabel = new JLabel("Borders");
         borderSectionLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
         borderSectionLabel.setFont(borderSectionLabel.getFont().deriveFont(java.awt.Font.BOLD, 13f));
         borderSectionLabel.setAlignmentX(CENTER_ALIGNMENT);
@@ -175,7 +176,7 @@ public class RegionConfigComponent extends JPanel
         teleportsLabelPanel.setLayout(new BoxLayout(teleportsLabelPanel, BoxLayout.X_AXIS));
         teleportsLabelPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
         teleportsLabelPanel.setBorder(BorderFactory.createEmptyBorder(10, 0, 5, 0));
-        JLabel teleportsSectionLabel = new JLabel("Teleports Whitelist");
+        JLabel teleportsSectionLabel = new JLabel("Teleport Allow List");
         teleportsSectionLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
         teleportsSectionLabel.setFont(teleportsSectionLabel.getFont().deriveFont(java.awt.Font.BOLD, 13f));
         teleportsSectionLabel.setAlignmentX(CENTER_ALIGNMENT);
@@ -208,6 +209,408 @@ public class RegionConfigComponent extends JPanel
         button.setMinimumSize(size);
         button.addActionListener(action);
         return button;
+    }
+
+    /**
+     * Create a RuneLite-style toggle switch.
+     */
+    private JToggleButton createSwitchToggle(boolean selected, Runnable onEnable, Runnable onDisable)
+    {
+        JToggleButton toggle = new PaintedSwitchButton();
+        toggle.setSelected(selected);
+        toggle.addActionListener(e -> {
+            boolean on = toggle.isSelected();
+            if (on)
+            {
+                if (onEnable != null) onEnable.run();
+            }
+            else
+            {
+                if (onDisable != null) onDisable.run();
+            }
+        });
+        return toggle;
+    }
+
+    /**
+     * Toggle button that applies RuneLite's native toggle UI.
+     */
+    private static final class PaintedSwitchButton extends JToggleButton
+    {
+        // Sized and colored to closely match RuneLite toggles
+        private static final Dimension SIZE = new Dimension(22, 13);
+        private static final int TRACK_HEIGHT = 8;
+        private static final int KNOB_SIZE = 10;
+        private static final Color ACTIVE_TRACK = new Color(0x6C480B);
+        private static final Color ACTIVE_KNOB = new Color(0xE98600);
+        private static final Color INACTIVE_TRACK = new Color(0x3A3A3A);
+        private static final Color INACTIVE_KNOB = new Color(0x5C5C5C);
+        private static final Color ACTIVE_TRACK_HOVER = new Color(0x583F17);
+        private static final Color ACTIVE_KNOB_HOVER = new Color(0xB06A00);
+        private static final Color INACTIVE_TRACK_HOVER = new Color(0x353535);
+        private static final Color INACTIVE_KNOB_HOVER = new Color(0x4D4D4D);
+
+        private boolean hovered = false;
+
+        private PaintedSwitchButton()
+        {
+            setPreferredSize(SIZE);
+            setMinimumSize(SIZE);
+            setMaximumSize(SIZE);
+            setBorder(BorderFactory.createEmptyBorder());
+            setContentAreaFilled(false);
+            setFocusPainted(false);
+            setOpaque(false);
+            updateTooltip();
+            addMouseListener(new java.awt.event.MouseAdapter()
+            {
+                @Override
+                public void mouseEntered(java.awt.event.MouseEvent e)
+                {
+                    hovered = true;
+                    repaint();
+                }
+
+                @Override
+                public void mouseExited(java.awt.event.MouseEvent e)
+                {
+                    hovered = false;
+                    repaint();
+                }
+            });
+        }
+
+        @Override
+        protected void paintComponent(java.awt.Graphics g)
+        {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+            int w = getWidth();
+            int h = getHeight();
+
+            boolean on = isSelected();
+            Color track = on
+                ? (hovered ? ACTIVE_TRACK_HOVER : ACTIVE_TRACK)
+                : (hovered ? INACTIVE_TRACK_HOVER : INACTIVE_TRACK);
+            Color knob = on
+                ? (hovered ? ACTIVE_KNOB_HOVER : ACTIVE_KNOB)
+                : (hovered ? INACTIVE_KNOB_HOVER : INACTIVE_KNOB);
+
+            int trackX = 1;
+            int trackY = (h - TRACK_HEIGHT) / 2;
+            int trackWidth = w - 2;
+            g2.setColor(track);
+            g2.fillRoundRect(trackX, trackY, trackWidth, TRACK_HEIGHT, TRACK_HEIGHT, TRACK_HEIGHT);
+
+            int knobX = on ? (trackX + trackWidth - KNOB_SIZE) : (trackX);
+            int knobY = (h - KNOB_SIZE) / 2;
+
+            g2.setColor(knob);
+            g2.fillOval(knobX, knobY, KNOB_SIZE, KNOB_SIZE);
+
+            g2.dispose();
+        }
+
+        @Override
+        public void setSelected(boolean b)
+        {
+            super.setSelected(b);
+            updateTooltip();
+        }
+
+        private void updateTooltip()
+        {
+            setToolTipText(isSelected() ? "Disable Region" : "Enable Region");
+        }
+    }
+
+    private void openThemeDialog(Border border)
+    {
+        if (border == null)
+        {
+            return;
+        }
+
+        styleDialogBorderHighlight = border;
+        refreshBorderList();
+
+        JDialog dialog = new JDialog();
+        dialog.setTitle("Border Style - " + border.getName());
+        dialog.setModal(true);
+        dialog.setAlwaysOnTop(true);
+        dialog.setResizable(false);
+        dialog.setSize(700, 420);
+        dialog.setLocationRelativeTo(this);
+
+        JPanel root = new JPanel();
+        root.setLayout(new BoxLayout(root, BoxLayout.Y_AXIS));
+        root.setBackground(ColorScheme.DARK_GRAY_COLOR);
+
+        // Render mode radios
+        JPanel modePanel = new JPanel();
+        modePanel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+        modePanel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        modePanel.setLayout(new BoxLayout(modePanel, BoxLayout.Y_AXIS));
+        modePanel.setAlignmentX(CENTER_ALIGNMENT);
+
+        JRadioButton linesRadio = new JRadioButton("Lines");
+        JRadioButton propsRadio = new JRadioButton("Props");
+        ButtonGroup group = new ButtonGroup();
+        group.add(linesRadio);
+        group.add(propsRadio);
+
+        linesRadio.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+        propsRadio.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+        linesRadio.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+        propsRadio.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+
+        Border.RenderMode currentMode = border.getRenderMode();
+        switch (currentMode)
+        {
+            case LINES:
+                linesRadio.setSelected(true);
+                break;
+            default:
+                propsRadio.setSelected(true);
+                break;
+        }
+
+        linesRadio.setAlignmentX(CENTER_ALIGNMENT);
+        propsRadio.setAlignmentX(CENTER_ALIGNMENT);
+        modePanel.add(linesRadio);
+        modePanel.add(propsRadio);
+
+        // Color chooser for lines (embedded)
+        JPanel colorPanel = new JPanel();
+        colorPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        colorPanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+        colorPanel.setLayout(new BorderLayout());
+        Color initial = border.getLineColor() != null ? border.getLineColor() : new Color(255, 255, 0, 220);
+
+        javax.swing.JColorChooser chooser = new javax.swing.JColorChooser(initial);
+        chooser.setPreviewPanel(new JPanel()); // minimal preview
+        chooser.setBorder(BorderFactory.createEmptyBorder(0,0,0,0));
+        // Keep only swatches panel
+        javax.swing.colorchooser.AbstractColorChooserPanel swatchPanel = null;
+        for (var panel : chooser.getChooserPanels())
+        {
+            if (panel != null && "Swatches".equalsIgnoreCase(panel.getDisplayName()))
+            {
+                swatchPanel = panel;
+                break;
+            }
+        }
+        if (swatchPanel != null)
+        {
+            chooser.setChooserPanels(new javax.swing.colorchooser.AbstractColorChooserPanel[]{swatchPanel});
+        }
+
+        JPanel alphaPanel = new JPanel();
+        alphaPanel.setLayout(new BoxLayout(alphaPanel, BoxLayout.X_AXIS));
+        alphaPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        JLabel alphaLabel = new JLabel("Opacity");
+        alphaLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+        JSlider alphaSlider = new JSlider(0, 255, initial.getAlpha());
+        alphaSlider.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        alphaSlider.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+        alphaSlider.setMajorTickSpacing(85);
+        alphaSlider.setMinorTickSpacing(17);
+        alphaSlider.setPaintTicks(true);
+
+        JLabel alphaValue = new JLabel(String.valueOf(initial.getAlpha()));
+        alphaValue.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+        alphaPanel.add(alphaLabel);
+        alphaPanel.add(Box.createHorizontalStrut(8));
+        alphaPanel.add(alphaSlider);
+        alphaPanel.add(Box.createHorizontalStrut(8));
+        alphaPanel.add(alphaValue);
+
+        alphaSlider.addChangeListener(e -> alphaValue.setText(String.valueOf(alphaSlider.getValue())));
+
+        JPanel chooserContainer = new JPanel(new BorderLayout());
+        chooserContainer.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        chooserContainer.add(chooser, BorderLayout.CENTER);
+        chooserContainer.add(alphaPanel, BorderLayout.SOUTH);
+
+        colorPanel.add(chooserContainer, BorderLayout.CENTER);
+
+        // Prop grid
+        JPanel propPanel = new JPanel(new BorderLayout());
+        propPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        propPanel.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+
+        JPanel grid = new JPanel(new GridLayout(0, 4, 4, 4));
+        grid.setBackground(ColorScheme.DARK_GRAY_COLOR);
+
+        PropStyle currentStyle = border.getPropStyle() != null ? border.getPropStyle() : PropStyle.SEA_ROCK;
+        for (PropStyle style : PropStyle.values())
+        {
+            JButton b = new JButton();
+            b.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+            b.setFocusPainted(false);
+            b.setToolTipText(getDisplayName(style));
+            BufferedImage img = loadPropThumbnail(style);
+            if (img != null)
+            {
+                java.awt.Image scaled = img.getScaledInstance(64, 64, java.awt.Image.SCALE_SMOOTH);
+                b.setIcon(new javax.swing.ImageIcon(scaled));
+            }
+            else
+            {
+                b.setText(getDisplayName(style));
+            }
+            if (style == currentStyle)
+            {
+                b.setBorder(BorderFactory.createLineBorder(ColorScheme.BRAND_ORANGE, 2));
+            }
+            b.addActionListener(e -> {
+                clearBorders(grid);
+                b.setBorder(BorderFactory.createLineBorder(ColorScheme.BRAND_ORANGE, 2));
+                border.setPropStyle(style);
+            });
+            grid.add(b);
+        }
+
+        JScrollPane scroll = new JScrollPane(grid);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        propPanel.add(scroll, BorderLayout.CENTER);
+
+        // Buttons
+        JPanel actions = new JPanel();
+        actions.setBackground(ColorScheme.DARK_GRAY_COLOR);
+        JButton ok = new JButton("OK");
+        ok.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+        ok.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+        ok.addActionListener(e -> {
+            if (linesRadio.isSelected())
+            {
+                border.setRenderMode(RenderMode.LINES);
+                Color chosen = chooser.getColor();
+                int alpha = alphaSlider.getValue();
+                if (chosen != null)
+                {
+                    border.setLineColor(new Color(chosen.getRed(), chosen.getGreen(), chosen.getBlue(), alpha));
+                }
+            }
+            else
+            {
+                border.setRenderMode(RenderMode.PROPS);
+            }
+            plugin.saveRegions();
+            plugin.notifyRegionsChanged();
+            refreshBorderList();
+            dialog.dispose();
+        });
+
+        JButton cancel = new JButton("Cancel");
+        cancel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+        cancel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+        cancel.addActionListener(e -> dialog.dispose());
+
+        actions.add(ok);
+        actions.add(cancel);
+
+        root.add(modePanel);
+        root.add(colorPanel);
+        root.add(propPanel);
+        root.add(actions);
+
+        dialog.setContentPane(root);
+        // Toggle panels based on selection
+        Runnable toggle = () -> {
+            boolean lines = linesRadio.isSelected();
+            colorPanel.setVisible(lines);
+            propPanel.setVisible(!lines);
+            dialog.repaint();
+        };
+        linesRadio.addActionListener(e -> toggle.run());
+        propsRadio.addActionListener(e -> toggle.run());
+        toggle.run();
+        dialog.setVisible(true);
+        styleDialogBorderHighlight = null;
+        refreshBorderList();
+    }
+
+
+    private void clearBorders(JPanel grid)
+    {
+        for (java.awt.Component c : grid.getComponents())
+        {
+            if (c instanceof JButton)
+            {
+                ((JButton)c).setBorder(BorderFactory.createEmptyBorder(2,2,2,2));
+            }
+        }
+    }
+
+    private BufferedImage loadPropThumbnail(PropStyle style)
+    {
+        String id = String.valueOf(getModelId(style));
+        try
+        {
+            return ImageUtil.loadImageResource(RegionConfigComponent.class, "/" + id + ".png");
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
+    }
+
+    private String getDisplayName(PropStyle style)
+    {
+        switch (style)
+        {
+            case SEA_ROCK:
+                return "Sea Rock";
+            case ROCK_WALL:
+                return "Rock Wall";
+            case IRON_FENCE:
+                return "Iron Fence";
+            case LOG_FENCE:
+                return "Log Fence";
+            default:
+                return style.name();
+        }
+    }
+
+    private int getModelId(PropStyle style)
+    {
+        switch (style)
+        {
+            case SEA_ROCK:
+                return 58598;
+            case ROCK_WALL:
+                return 17319;
+            case IRON_FENCE:
+                return 6745;
+            case LOG_FENCE:
+                return 42889;
+            default:
+                return 58598;
+        }
+    }
+
+    private JButton createPropsButton(Border border)
+    {
+        JButton propsButton = new JButton();
+        propsButton.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+        propsButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+        propsButton.setFocusPainted(false);
+        propsButton.setPreferredSize(new Dimension(24, 24));
+        propsButton.setMaximumSize(new Dimension(24, 24));
+        propsButton.setMinimumSize(new Dimension(24, 24));
+        propsButton.setToolTipText("Border Style");
+        if (propsIcon != null && propsIcon.getIconWidth() > 0)
+        {
+            java.awt.Image scaled = propsIcon.getImage().getScaledInstance(16, 16, java.awt.Image.SCALE_SMOOTH);
+            propsButton.setIcon(new javax.swing.ImageIcon(scaled));
+        }
+        propsButton.addActionListener(e -> {
+            plugin.selectBorder(border);
+            openThemeDialog(border);
+        });
+        return propsButton;
     }
 
     private String ellipsize(String text, int maxLength)
@@ -354,34 +757,9 @@ public class RegionConfigComponent extends JPanel
         }
     }
     
-    private void resetBorder(Region profile)
+    private void finishBorderFromList(Border border)
     {
-        int result = JOptionPane.showConfirmDialog(
-            this,
-            "Are you sure you want to reset the border? This will remove all marked tiles.",
-            "Reset Border",
-            JOptionPane.YES_NO_OPTION,
-            JOptionPane.WARNING_MESSAGE
-        );
-
-        if (result == JOptionPane.YES_OPTION)
-        {
-            // Clear all boundary tiles and inner tiles
-            profile.getBoundaryTiles().clear();
-            profile.getInnerTiles().clear();
-            plugin.saveRegions();
-            plugin.notifyRegionsChanged();
-            // Automatically enable editing mode after reset
-            plugin.setEditing(true);
-            refreshRegionList();
-            refreshBorderList();
-        }
-    }
-
-
-    private void finishBorderFromList(Region profile)
-    {
-        if (profile.getBoundaryTiles().isEmpty())
+        if (border.getBoundaryTiles().isEmpty())
         {
             JOptionPane.showMessageDialog(
                 this,
@@ -393,7 +771,7 @@ public class RegionConfigComponent extends JPanel
         }
         
         // Compute inner tiles
-        boolean success = plugin.computeInnerTiles(profile);
+        boolean success = plugin.computeInnerTiles(border);
         
         if (!success)
         {
@@ -422,10 +800,10 @@ public class RegionConfigComponent extends JPanel
     }
 
 
-    private void editBorder(Region profile)
+    private void editBorder(Border border)
     {
         // Re-enable editing mode: clear inner tiles and enable editor
-        plugin.enableEditingMode(profile);
+        plugin.enableEditingMode(border);
         refreshRegionList();
         refreshBorderList();
     }
@@ -479,51 +857,6 @@ public class RegionConfigComponent extends JPanel
     }
     
     /**
-     * Fallback refresh icon used if sprite is missing.
-     */
-    private ImageIcon createFallbackRefreshIcon()
-    {
-        BufferedImage icon = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = icon.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        
-        // Set color to light gray (same as button foreground)
-        g.setColor(ColorScheme.LIGHT_GRAY_COLOR);
-        g.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        
-        // Draw a circular arrow (refresh icon)
-        // Center point
-        int centerX = 8;
-        int centerY = 8;
-        int radius = 5;
-        
-        // Draw circular arc (about 270 degrees, starting from top-right)
-        // Using drawArc: x, y, width, height, startAngle, arcAngle
-        g.drawArc(centerX - radius, centerY - radius, radius * 2, radius * 2, 45, 270);
-        
-        // Draw arrow head at the end of the arc (pointing clockwise)
-        // The arc ends at approximately 315 degrees (45 + 270)
-        // Convert to radians: 315 degrees = 5.5 radians
-        double endAngle = Math.toRadians(315);
-        double arrowX = centerX + radius * Math.cos(endAngle);
-        double arrowY = centerY + radius * Math.sin(endAngle);
-        
-        // Draw arrow head (small triangle pointing in the direction of rotation)
-        java.awt.Polygon arrowHead = new java.awt.Polygon();
-        // Arrow point
-        arrowHead.addPoint((int)(arrowX), (int)(arrowY));
-        // Arrow base point 1 (perpendicular to the arc)
-        double perpAngle = endAngle + Math.PI / 2;
-        arrowHead.addPoint((int)(arrowX - 2 * Math.cos(perpAngle)), (int)(arrowY - 2 * Math.sin(perpAngle)));
-        // Arrow base point 2 (opposite side)
-        arrowHead.addPoint((int)(arrowX - 2 * Math.cos(endAngle)), (int)(arrowY - 2 * Math.sin(endAngle)));
-        g.fillPolygon(arrowHead);
-        
-        g.dispose();
-        return new ImageIcon(icon);
-    }
-
-    /**
      * Fallback delete icon (simple X) used if sprite missing.
      */
     private ImageIcon createFallbackDeleteIcon()
@@ -535,6 +868,38 @@ public class RegionConfigComponent extends JPanel
         g.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
         g.drawLine(4, 4, 12, 12);
         g.drawLine(12, 4, 4, 12);
+        g.dispose();
+        return new ImageIcon(icon);
+    }
+
+    /**
+     * Fallback add icon (simple +) used if sprite missing.
+     */
+    private ImageIcon createFallbackAddIcon()
+    {
+        BufferedImage icon = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = icon.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setColor(ColorScheme.LIGHT_GRAY_COLOR);
+        g.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+        g.drawLine(8, 3, 8, 13);
+        g.drawLine(3, 8, 13, 8);
+        g.dispose();
+        return new ImageIcon(icon);
+    }
+
+    /**
+     * Fallback props icon (simple themed square) if sprite missing.
+     */
+    private ImageIcon createFallbackPropsIcon()
+    {
+        BufferedImage icon = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = icon.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setColor(ColorScheme.BRAND_ORANGE);
+        g.fillRoundRect(3, 3, 10, 10, 4, 4);
+        g.setColor(ColorScheme.DARKER_GRAY_COLOR);
+        g.drawRoundRect(3, 3, 10, 10, 4, 4);
         g.dispose();
         return new ImageIcon(icon);
     }
@@ -558,78 +923,160 @@ public class RegionConfigComponent extends JPanel
             }
             else
             {
-                // Show current region's border section
-                JPanel borderItemPanel = new JPanel(new BorderLayout());
-                borderItemPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
-                borderItemPanel.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
-                    BorderFactory.createEmptyBorder(5, 10, 5, 10)
-                ));
-
-                // Border name label (show region name, not border name)
-                String regionName = currentProfile.getName();
-                boolean hasInnerTiles = !currentProfile.getInnerTiles().isEmpty();
-                int maxChars = hasInnerTiles ? 26 : 20; // fewer chars when buttons occupy more space
-                JLabel nameLabel = new JLabel(ellipsize(regionName, maxChars));
-                nameLabel.setToolTipText(regionName);
-                nameLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-                borderItemPanel.add(nameLabel, BorderLayout.WEST);
-
-                // Button panel for actions
-                JPanel buttonPanel = new JPanel();
-                buttonPanel.setLayout(new BoxLayout(buttonPanel, BoxLayout.X_AXIS));
-                buttonPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
-                buttonPanel.setOpaque(false);
-                
-                if (hasInnerTiles)
+                Border activeBorder = plugin.getActiveBorder();
+                for (Border border : currentProfile.getBorders())
                 {
-                    // Finished border: show edit and reset buttons
-                    // Edit button with pencil icon
-                    JButton editButton = new JButton();
-                    editButton.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-                    editButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-                    editButton.setFocusPainted(false);
-                    editButton.setPreferredSize(new Dimension(25, 25));
-                    editButton.setMaximumSize(new Dimension(25, 25));
-                    editButton.setMinimumSize(new Dimension(25, 25));
-                    editButton.setToolTipText("Edit");
-                    editButton.setIcon(editIcon);
-                    editButton.addActionListener(e -> editBorder(currentProfile));
-                    buttonPanel.add(editButton);
-                    
+                    boolean highlight = (plugin.isEditing() && border == activeBorder) || border == styleDialogBorderHighlight;
+
+                    JPanel borderItemPanel = new JPanel(new BorderLayout());
+                    borderItemPanel.setBackground(highlight ? ColorScheme.DARKER_GRAY_HOVER_COLOR : ColorScheme.DARK_GRAY_COLOR);
+                    borderItemPanel.setBorder(BorderFactory.createCompoundBorder(
+                        BorderFactory.createMatteBorder(0, 0, 1, 0, ColorScheme.MEDIUM_GRAY_COLOR),
+                        BorderFactory.createEmptyBorder(5, 10, 5, 10)
+                    ));
+
+                    boolean hasInnerTiles = !border.getInnerTiles().isEmpty();
+                    int maxChars = hasInnerTiles ? 26 : 20;
+                    JLabel nameLabel = new JLabel(ellipsize(border.getName(), maxChars));
+                    nameLabel.setToolTipText(border.getName());
+                    nameLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+                    nameLabel.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
+                    nameLabel.addMouseListener(new java.awt.event.MouseAdapter() {
+                        @Override
+                        public void mouseClicked(java.awt.event.MouseEvent e) {
+                            plugin.selectBorder(border);
+                            String newName = JOptionPane.showInputDialog(
+                                RegionConfigComponent.this,
+                                "Rename border:",
+                                border.getName()
+                            );
+                            if (newName != null && !newName.trim().isEmpty())
+                            {
+                                plugin.renameBorder(border, newName.trim());
+                            }
+                        }
+                        @Override
+                        public void mouseEntered(java.awt.event.MouseEvent e) {
+                            borderItemPanel.setBackground(ColorScheme.DARKER_GRAY_HOVER_COLOR);
+                        }
+                        @Override
+                        public void mouseExited(java.awt.event.MouseEvent e) {
+                            borderItemPanel.setBackground(
+                                ((plugin.isEditing() && border == plugin.getActiveBorder()) || border == styleDialogBorderHighlight)
+                                    ? ColorScheme.DARKER_GRAY_HOVER_COLOR
+                                    : ColorScheme.DARK_GRAY_COLOR
+                            );
+                        }
+                    });
+                    borderItemPanel.add(nameLabel, BorderLayout.WEST);
+
+                    JPanel buttonPanel = new JPanel();
+                    buttonPanel.setLayout(new BoxLayout(buttonPanel, BoxLayout.X_AXIS));
+                    buttonPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+                    buttonPanel.setOpaque(false);
+
+                    boolean showStyleButton = !(plugin.isEditing() && border == plugin.getActiveBorder());
+                    if (showStyleButton)
+                    {
+                        JButton propsButton = createPropsButton(border);
+                        buttonPanel.add(propsButton);
+                        buttonPanel.add(Box.createHorizontalStrut(5));
+                    }
+
+                    if (hasInnerTiles)
+                    {
+                        JButton editButton = new JButton();
+                        editButton.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+                        editButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+                        editButton.setFocusPainted(false);
+                        editButton.setPreferredSize(new Dimension(25, 25));
+                        editButton.setMaximumSize(new Dimension(25, 25));
+                        editButton.setMinimumSize(new Dimension(25, 25));
+                        editButton.setToolTipText("Edit Border");
+                        editButton.setIcon(editIcon);
+                        editButton.addActionListener(e -> {
+                            plugin.selectBorder(border);
+                            editBorder(border);
+                        });
+                        buttonPanel.add(editButton);
+                    }
+                    else
+                    {
+                        JButton finishButton = new JButton("Finish");
+                        finishButton.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+                        finishButton.setForeground(ColorScheme.BRAND_ORANGE);
+                        finishButton.setBorder(BorderFactory.createLineBorder(ColorScheme.BRAND_ORANGE, 1));
+                        finishButton.setFocusPainted(false);
+                        finishButton.setPreferredSize(new Dimension(80, 25));
+                        finishButton.setMaximumSize(new Dimension(80, 25));
+                        finishButton.setMinimumSize(new Dimension(80, 25));
+                        finishButton.setToolTipText("Draw Border Around Tiles");
+                        finishButton.addActionListener(e -> {
+                            plugin.selectBorder(border);
+                            finishBorderFromList(border);
+                        });
+                        buttonPanel.add(finishButton);
+                    }
+
                     buttonPanel.add(Box.createHorizontalStrut(5));
-                    
-                    // Reset button with refresh icon
-                    JButton resetButton = new JButton();
-                    resetButton.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-                    resetButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-                    resetButton.setFocusPainted(false);
-                    resetButton.setPreferredSize(new Dimension(25, 25));
-                    resetButton.setMaximumSize(new Dimension(25, 25));
-                    resetButton.setMinimumSize(new Dimension(25, 25));
-                    resetButton.setToolTipText("Reset Border");
-                    resetButton.setIcon(resetIcon);
-                    resetButton.addActionListener(e -> resetBorder(currentProfile));
-                    buttonPanel.add(resetButton);
+
+                    JButton deleteButton = new JButton();
+                    deleteButton.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+                    deleteButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+                    deleteButton.setFocusPainted(false);
+                    deleteButton.setPreferredSize(new Dimension(24, 24));
+                    deleteButton.setMaximumSize(new Dimension(24, 24));
+                    deleteButton.setMinimumSize(new Dimension(24, 24));
+                    deleteButton.setToolTipText("Delete Border");
+                    if (deleteIcon != null && deleteIcon.getIconWidth() > 0)
+                    {
+                        java.awt.Image scaled = deleteIcon.getImage().getScaledInstance(18, 18, java.awt.Image.SCALE_SMOOTH);
+                        deleteButton.setIcon(new javax.swing.ImageIcon(scaled));
+                    }
+                    else
+                    {
+                        deleteButton.setIcon(deleteIcon);
+                    }
+                    deleteButton.addActionListener(e -> {
+                        int result = JOptionPane.showConfirmDialog(
+                            RegionConfigComponent.this,
+                            "Delete border '" + border.getName() + "'?",
+                            "Delete Border",
+                            JOptionPane.YES_NO_OPTION,
+                            JOptionPane.WARNING_MESSAGE
+                        );
+                        if (result == JOptionPane.YES_OPTION)
+                        {
+                            plugin.deleteBorder(currentProfile, border);
+                        }
+                    });
+                    buttonPanel.add(deleteButton);
+
+                    borderItemPanel.add(buttonPanel, BorderLayout.EAST);
+                    borderListPanel.add(borderItemPanel);
                 }
-                else
-                {
-                    // Unfinished border: show Finish button
-                    JButton finishButton = new JButton("Finish");
-                    finishButton.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-                    finishButton.setForeground(ColorScheme.BRAND_ORANGE);
-                    finishButton.setBorder(BorderFactory.createLineBorder(ColorScheme.BRAND_ORANGE, 1));
-                    finishButton.setFocusPainted(false);
-                    finishButton.setPreferredSize(new Dimension(80, 25));
-                    finishButton.setMaximumSize(new Dimension(80, 25));
-                    finishButton.setMinimumSize(new Dimension(80, 25));
-                    finishButton.setToolTipText("Draw Border Around Tiles");
-                    finishButton.addActionListener(e -> finishBorderFromList(currentProfile));
-                    buttonPanel.add(finishButton);
-                }
-                
-                borderItemPanel.add(buttonPanel, BorderLayout.EAST);
-                borderListPanel.add(borderItemPanel);
+
+                JPanel addButtonPanel = new JPanel(new BorderLayout());
+                addButtonPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+                addButtonPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 0, 10));
+
+                JButton addBorderButton = new JButton();
+                addBorderButton.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+                addBorderButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+                addBorderButton.setFocusPainted(false);
+                addBorderButton.setPreferredSize(new Dimension(30, 30));
+                addBorderButton.setMaximumSize(new Dimension(30, 30));
+                addBorderButton.setMinimumSize(new Dimension(30, 30));
+                addBorderButton.setToolTipText("Add Border");
+                addBorderButton.setIcon(addIcon);
+                addBorderButton.addActionListener(e -> {
+                    Border newBorder = plugin.createBorder(currentProfile, null);
+                    plugin.setEditing(true);
+                    plugin.selectBorder(newBorder);
+                });
+
+                addButtonPanel.add(addBorderButton, BorderLayout.CENTER);
+                borderListPanel.add(addButtonPanel);
             }
 
             borderListPanel.revalidate();
@@ -661,10 +1108,12 @@ public class RegionConfigComponent extends JPanel
             {
                 for (Region profile : profiles)
                 {
+                    boolean isActive = profile == currentProfile;
+
                     // Panel for each region item
                     JPanel regionItemPanel = new JPanel(new BorderLayout());
                     regionItemPanel.setBackground(
-                        profile == currentProfile 
+                        isActive 
                             ? ColorScheme.DARKER_GRAY_HOVER_COLOR 
                             : ColorScheme.DARK_GRAY_COLOR
                     );
@@ -677,19 +1126,21 @@ public class RegionConfigComponent extends JPanel
                     String regionName = profile.getName();
                 JLabel nameLabel = new JLabel(ellipsize(regionName, 32));
                     nameLabel.setToolTipText(regionName);
-                    nameLabel.setForeground(
-                        profile == currentProfile 
-                            ? ColorScheme.BRAND_ORANGE 
-                            : ColorScheme.LIGHT_GRAY_COLOR
-                    );
+                    nameLabel.setForeground(isActive ? ColorScheme.BRAND_ORANGE : ColorScheme.LIGHT_GRAY_COLOR);
                     nameLabel.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
                     
                     nameLabel.addMouseListener(new java.awt.event.MouseAdapter() {
                         @Override
                         public void mouseClicked(java.awt.event.MouseEvent e) {
-                            plugin.selectRegion(profile.getName());
-                            refreshRegionList();
-                            refreshBorderList();
+                            String newName = JOptionPane.showInputDialog(
+                                RegionConfigComponent.this,
+                                "Rename region:",
+                                profile.getName()
+                            );
+                            if (newName != null && !newName.trim().isEmpty())
+                            {
+                                plugin.renameRegion(profile, newName.trim());
+                            }
                         }
                         @Override
                         public void mouseEntered(java.awt.event.MouseEvent e) {
@@ -706,22 +1157,63 @@ public class RegionConfigComponent extends JPanel
                     });
                     regionItemPanel.add(nameLabel, BorderLayout.WEST);
                     
-                    // Delete button
+                    // Toggle + Delete buttons on the right
+                    JPanel rightPanel = new JPanel();
+                    rightPanel.setLayout(new BoxLayout(rightPanel, BoxLayout.X_AXIS));
+                    rightPanel.setBackground(regionItemPanel.getBackground());
+                    rightPanel.setOpaque(false);
+
+                    JToggleButton toggleButton = createSwitchToggle(isActive, () -> plugin.setActiveRegion(profile), plugin::clearActiveRegion);
+                    rightPanel.add(toggleButton);
+                    rightPanel.add(Box.createHorizontalStrut(8));
+
                     JButton deleteButton = new JButton();
                     deleteButton.setBackground(ColorScheme.DARKER_GRAY_COLOR);
                     deleteButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
                     deleteButton.setFocusPainted(false);
-                    deleteButton.setPreferredSize(new Dimension(25, 25));
-                    deleteButton.setMaximumSize(new Dimension(25, 25));
-                    deleteButton.setMinimumSize(new Dimension(25, 25));
+                    deleteButton.setPreferredSize(new Dimension(24, 24));
+                    deleteButton.setMaximumSize(new Dimension(24, 24));
+                    deleteButton.setMinimumSize(new Dimension(24, 24));
                     deleteButton.setToolTipText("Delete Region");
-                    deleteButton.setIcon(deleteIcon);
+                    if (deleteIcon != null && deleteIcon.getIconWidth() > 0)
+                    {
+                        java.awt.Image scaled = deleteIcon.getImage().getScaledInstance(18, 18, java.awt.Image.SCALE_SMOOTH);
+                        deleteButton.setIcon(new javax.swing.ImageIcon(scaled));
+                    }
+                    else
+                    {
+                        deleteButton.setIcon(deleteIcon);
+                    }
                     deleteButton.addActionListener(e -> deleteRegion(profile.getName()));
-                    regionItemPanel.add(deleteButton, BorderLayout.EAST);
+                    rightPanel.add(deleteButton);
+
+                    regionItemPanel.add(rightPanel, BorderLayout.EAST);
                     
                     regionListPanel.add(regionItemPanel);
                 }
             }
+
+            // Add-region button matching the border add button style
+            JPanel addRegionPanel = new JPanel(new BorderLayout());
+            addRegionPanel.setBackground(ColorScheme.DARK_GRAY_COLOR);
+            addRegionPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 0, 10));
+
+            JButton addRegionButton = new JButton();
+            addRegionButton.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+            addRegionButton.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+            addRegionButton.setFocusPainted(false);
+            addRegionButton.setPreferredSize(new Dimension(30, 30));
+            addRegionButton.setMaximumSize(new Dimension(30, 30));
+            addRegionButton.setMinimumSize(new Dimension(30, 30));
+            addRegionButton.setToolTipText("Create New Region");
+            if (addIcon != null)
+            {
+                addRegionButton.setIcon(addIcon);
+            }
+            addRegionButton.addActionListener(e -> createNewRegion());
+
+            addRegionPanel.add(addRegionButton, BorderLayout.CENTER);
+            regionListPanel.add(addRegionPanel);
 
             regionListPanel.revalidate();
             regionListPanel.repaint();
@@ -804,6 +1296,18 @@ public class RegionConfigComponent extends JPanel
                     categoryLabel.setFont(categoryLabel.getFont().deriveFont(java.awt.Font.BOLD));
                     categoryHeader.add(categoryLabel, BorderLayout.WEST);
                     
+                    // Teleports in this category (filtered)
+                    List<TeleportDefinition> teleports = teleportRegistry.getTeleportsByCategory(category);
+                    final List<TeleportDefinition> visibleTeleports = new java.util.ArrayList<>(teleports);
+                    visibleTeleports.removeIf(t -> t.getId().startsWith("spell_lunar_tele_group"));
+                    
+                    JLabel categoryCountLabel = new JLabel(formatTeleportCount(currentProfile, visibleTeleports));
+                    categoryCountLabel.setForeground(ColorScheme.MEDIUM_GRAY_COLOR);
+                    categoryCountLabel.setFont(categoryCountLabel.getFont().deriveFont(java.awt.Font.BOLD));
+                    categoryHeader.add(categoryCountLabel, BorderLayout.EAST);
+                    // Ensure imported profiles reflect current counts/colors immediately
+                    updateTeleportCountLabel(currentProfile, visibleTeleports, categoryCountLabel);
+                    
                     // Panel to hold teleports in this category (collapsible body)
                     JPanel categoryContentPanel = new JPanel();
                     categoryContentPanel.setLayout(new BoxLayout(categoryContentPanel, BoxLayout.Y_AXIS));
@@ -845,16 +1349,9 @@ public class RegionConfigComponent extends JPanel
                     teleportsPanel.add(categoryPanel);
                     
                     // Teleports in this category
-                    List<TeleportDefinition> teleports = teleportRegistry.getTeleportsByCategory(category);
-                    for (TeleportDefinition teleport : teleports)
+                    for (TeleportDefinition teleport : visibleTeleports)
                     {
                         final String teleportId = teleport.getId();
-                        
-                        // Skip Tele Group spells - they should be hidden and controlled via single teleports
-                        if (teleportId.startsWith("spell_lunar_tele_group"))
-                        {
-                            continue;
-                        }
                         
                         JPanel teleportItemPanel = new JPanel(new BorderLayout());
                         teleportItemPanel.setAlignmentX(0.0f);
@@ -867,9 +1364,9 @@ public class RegionConfigComponent extends JPanel
                         ));
                         JCheckBox teleportCheckBox = new JCheckBox(teleport.getName());
                         teleportCheckBox.setBackground(ColorScheme.DARK_GRAY_COLOR);
-                        teleportCheckBox.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
                         teleportCheckBox.setSelected(currentProfile.getTeleportWhitelist().contains(teleportId));
                         teleportCheckBox.setFocusPainted(false);
+                        applyTeleportSelectionStyles(teleportCheckBox);
                         
                         teleportCheckBox.addActionListener(e -> {
                             boolean isSelected = teleportCheckBox.isSelected();
@@ -898,6 +1395,8 @@ public class RegionConfigComponent extends JPanel
                                 }
                             }
                             
+                            applyTeleportSelectionStyles(teleportCheckBox);
+                            updateTeleportCountLabel(currentProfile, visibleTeleports, categoryCountLabel);
                             plugin.saveRegions();
                             // Redraw spellbook to apply changes immediately
                             plugin.redrawSpellbook();
@@ -913,6 +1412,42 @@ public class RegionConfigComponent extends JPanel
             teleportsPanel.revalidate();
             teleportsPanel.repaint();
         });
+    }
+
+    private void applyTeleportSelectionStyles(JCheckBox checkbox)
+    {
+        boolean selected = checkbox.isSelected();
+        checkbox.setForeground(selected ? ColorScheme.LIGHT_GRAY_COLOR : ColorScheme.MEDIUM_GRAY_COLOR);
+        checkbox.setFont(checkbox.getFont().deriveFont(java.awt.Font.PLAIN));
+    }
+
+    private String formatTeleportCount(Region profile, List<TeleportDefinition> teleports)
+    {
+        int selected = 0;
+        if (profile != null && profile.getTeleportWhitelist() != null)
+        {
+            for (TeleportDefinition teleport : teleports)
+            {
+                if (profile.getTeleportWhitelist().contains(teleport.getId()))
+                {
+                    selected++;
+                }
+            }
+        }
+        return selected + "/" + teleports.size();
+    }
+
+    private void updateTeleportCountLabel(Region profile, List<TeleportDefinition> teleports, JLabel label)
+    {
+        if (label == null)
+        {
+            return;
+        }
+
+        label.setText(formatTeleportCount(profile, teleports));
+        boolean anySelected = profile != null && profile.getTeleportWhitelist() != null
+            && teleports.stream().anyMatch(t -> profile.getTeleportWhitelist().contains(t.getId()));
+        label.setForeground(anySelected ? ColorScheme.LIGHT_GRAY_COLOR : ColorScheme.MEDIUM_GRAY_COLOR);
     }
 }
 

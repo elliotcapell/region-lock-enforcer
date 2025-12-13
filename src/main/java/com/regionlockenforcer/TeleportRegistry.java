@@ -752,11 +752,21 @@ public class TeleportRegistry
             TeleportType.OBJECT, null, null, null, null, null, null));
         teleports.add(createTeleport("charter_catherby", "Catherby", "Charter Ships",
             TeleportType.OBJECT, null, null, null, null, null, null));
+        teleports.add(createTeleport("charter_mos_le_harmless", "Mos Le'Harmless", "Charter Ships",
+            TeleportType.OBJECT, null, null, null, null, null, null));
         teleports.add(createTeleport("charter_musa_point", "Musa Point", "Charter Ships",
             TeleportType.OBJECT, null, null, null, null, null, null));
         teleports.add(createTeleport("charter_port_khazard", "Port Khazard", "Charter Ships",
             TeleportType.OBJECT, null, null, null, null, null, null));
+        teleports.add(createTeleport("charter_port_phasmatys", "Port Phasmatys", "Charter Ships",
+            TeleportType.OBJECT, null, null, null, null, null, null));
+        teleports.add(createTeleport("charter_karamja_shipyard", "Karamja Shipyard", "Charter Ships",
+            TeleportType.OBJECT, null, null, null, null, null, null));
+        teleports.add(createTeleport("charter_port_tyras", "Port Tyras", "Charter Ships",
+            TeleportType.OBJECT, null, null, null, null, null, null));
         teleports.add(createTeleport("charter_corsair_cove", "Corsair Cove", "Charter Ships",
+            TeleportType.OBJECT, null, null, null, null, null, null));
+        teleports.add(createTeleport("charter_prifddinas", "Prifddinas", "Charter Ships",
             TeleportType.OBJECT, null, null, null, null, null, null));
         teleports.add(createTeleport("charter_port_piscarilius", "Port Piscarilius", "Charter Ships",
             TeleportType.OBJECT, null, null, null, null, null, null));
@@ -767,6 +777,14 @@ public class TeleportRegistry
         teleports.add(createTeleport("charter_sunset_coast", "Sunset Coast", "Charter Ships",
             TeleportType.OBJECT, null, null, null, null, null, null));
         teleports.add(createTeleport("charter_civitas_illa_fortis", "Civitas illa Fortis", "Charter Ships",
+            TeleportType.OBJECT, null, null, null, null, null, null));
+        teleports.add(createTeleport("charter_pandemonium", "The Pandemonium", "Charter Ships",
+            TeleportType.OBJECT, null, null, null, null, null, null));
+        teleports.add(createTeleport("charter_summer_shore", "The Summer Shore", "Charter Ships",
+            TeleportType.OBJECT, null, null, null, null, null, null));
+        teleports.add(createTeleport("charter_deepfin_point", "Deepfin Point", "Charter Ships",
+            TeleportType.OBJECT, null, null, null, null, null, null));
+        teleports.add(createTeleport("charter_port_roberts", "Port Roberts", "Charter Ships",
             TeleportType.OBJECT, null, null, null, null, null, null));
         return teleports;
     }

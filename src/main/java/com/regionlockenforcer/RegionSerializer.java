@@ -1,5 +1,6 @@
 package com.regionlockenforcer;
 
+import com.google.gson.Gson;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -10,11 +11,13 @@ import net.runelite.api.coords.WorldPoint;
 
 /**
  * Utility class for serializing/deserializing Region objects to/from strings.
- * Uses a simple format: "name|tile1;tile2;tile3" where tiles are "x,y,plane"
+ * Uses a versioned format to support multiple borders per region.
  */
 @Slf4j
 public class RegionSerializer
 {
+    private static final String VERSION_PREFIX = "v2|";
+    private static final Gson GSON = new Gson();
 
     /**
      * Serialize a WorldPoint to a string format: "x,y,plane"
@@ -91,7 +94,7 @@ public class RegionSerializer
         if (strings == null || strings.isEmpty()) return "";
         return String.join(";", strings);
     }
-    
+
     /**
      * Deserialize a set of strings from a semicolon-separated string.
      */
@@ -115,22 +118,35 @@ public class RegionSerializer
     }
 
     /**
-     * Serialize a Region to string format: "name|boundaryTiles|innerTiles|teleportWhitelist"
-     * Format: "name|tile1;tile2;tile3|tile4;tile5;tile6|teleport1;teleport2"
-     * Special characters in name are escaped: | becomes ||, ; becomes |;
+     * Serialize a Region to a versioned string.
      */
     public static String serializeRegion(Region region)
     {
         if (region == null) return "";
         try
         {
-            String name = region.getName() != null ? region.getName() : "Untitled Region";
-            // Escape special characters: | -> ||, ; -> |;
-            name = name.replace("|", "||").replace(";", "|;");
-            String boundaryTiles = serializeTiles(region.getBoundaryTiles());
-            String innerTiles = serializeTiles(region.getInnerTiles());
-            String teleportWhitelist = serializeStrings(region.getTeleportWhitelist());
-            return name + "|" + boundaryTiles + "|" + innerTiles + "|" + teleportWhitelist;
+            RegionData data = new RegionData();
+            data.name = region.getName() != null ? region.getName() : "Untitled Region";
+            data.teleportWhitelist = new ArrayList<>(region.getTeleportWhitelist() != null ? region.getTeleportWhitelist() : new HashSet<>());
+            data.borders = new ArrayList<>();
+
+            for (Border border : region.getBorders())
+            {
+                BorderData bd = new BorderData();
+                bd.name = border.getName();
+                bd.propStyle = border.getPropStyle() != null ? border.getPropStyle().name() : null;
+                bd.renderMode = border.getRenderMode() != null ? border.getRenderMode().name() : null;
+                bd.lineColor = border.getLineColor() != null ? border.getLineColor().getRGB() : null;
+                bd.boundaryTiles = border.getBoundaryTiles().stream()
+                        .map(wp -> new TileData(wp.getX(), wp.getY(), wp.getPlane()))
+                        .collect(Collectors.toList());
+                bd.innerTiles = border.getInnerTiles().stream()
+                        .map(wp -> new TileData(wp.getX(), wp.getY(), wp.getPlane()))
+                        .collect(Collectors.toList());
+                data.borders.add(bd);
+            }
+
+            return VERSION_PREFIX + GSON.toJson(data);
         }
         catch (Exception e)
         {
@@ -141,32 +157,87 @@ public class RegionSerializer
 
     /**
      * Deserialize a Region from string format.
-     * Supports old formats for backward compatibility:
-     * - Old format 1: "name|tiles" (just boundary tiles)
-     * - Old format 2: "name|boundaryTiles|innerTiles" (no teleport whitelist)
-     * - New format: "name|boundaryTiles|innerTiles|teleportWhitelist"
+     * Supports v2 JSON format and legacy pipe-delimited formats.
      */
     public static Region deserializeRegion(String str)
     {
         if (str == null || str.isEmpty()) return new Region();
         try
         {
+            // New format: v2|{json}
+            if (str.startsWith(VERSION_PREFIX))
+            {
+                String json = str.substring(VERSION_PREFIX.length());
+                RegionData data = GSON.fromJson(json, RegionData.class);
+                Region region = new Region(data != null && data.name != null ? data.name : "Untitled Region");
+
+                List<Border> borders = new ArrayList<>();
+                if (data != null && data.borders != null && !data.borders.isEmpty())
+                {
+                    for (BorderData bd : data.borders)
+                    {
+                        Border border = new Border(bd != null && bd.name != null ? bd.name : "Border");
+                        if (bd != null)
+                        {
+                            Set<WorldPoint> boundaryTiles = bd.boundaryTiles != null
+                                    ? bd.boundaryTiles.stream()
+                                        .map(td -> new WorldPoint(td.x, td.y, td.plane))
+                                        .collect(Collectors.toSet())
+                                    : new HashSet<>();
+                            Set<WorldPoint> innerTiles = bd.innerTiles != null
+                                    ? bd.innerTiles.stream()
+                                        .map(td -> new WorldPoint(td.x, td.y, td.plane))
+                                        .collect(Collectors.toSet())
+                                    : new HashSet<>();
+                            border.setBoundaryTiles(boundaryTiles);
+                            border.setInnerTiles(innerTiles);
+                            RegionLockEnforcerConfig.PropStyle mappedStyle = mapPropStyle(bd.propStyle);
+                            if (mappedStyle != null)
+                            {
+                                border.setPropStyle(mappedStyle);
+                            }
+
+                            Border.RenderMode mappedMode = mapRenderMode(bd.renderMode);
+                            if (mappedMode == null && mappedStyle != null)
+                            {
+                                // If a prop style exists but render mode missing, default to PROPS
+                                mappedMode = Border.RenderMode.PROPS;
+                            }
+                            if (mappedMode != null)
+                            {
+                                border.setRenderMode(mappedMode);
+                            }
+                            if (bd.lineColor != null)
+                            {
+                                border.setLineColor(new java.awt.Color(bd.lineColor, true));
+                            }
+                        }
+                        borders.add(border);
+                    }
+                }
+
+                region.setBorders(borders);
+                region.setTeleportWhitelist(data != null && data.teleportWhitelist != null
+                        ? new HashSet<>(data.teleportWhitelist)
+                        : new HashSet<>());
+                region.ensureCacheComputed();
+                return region;
+            }
+
+            // Legacy formats below
             int firstPipeIndex = str.indexOf('|');
             if (firstPipeIndex == -1) return new Region();
-            
+
             String name = str.substring(0, firstPipeIndex);
-            // Unescape special characters: || -> |, |; -> ;
             name = name.replace("|;", ";").replace("||", "|");
-            
+
             String rest = str.substring(firstPipeIndex + 1);
             Region region = new Region(name);
-            
-            // Split by | to get all parts
-            String[] parts = rest.split("\\|", -1); // -1 to keep trailing empty strings
-            
+
+            String[] parts = rest.split("\\|", -1);
+
             if (parts.length >= 3)
             {
-                // New format: boundaryTiles|innerTiles|teleportWhitelist
                 region.setBoundaryTiles(deserializeTiles(parts[0]));
                 region.setInnerTiles(deserializeTiles(parts[1]));
                 if (!parts[2].isEmpty())
@@ -180,22 +251,18 @@ public class RegionSerializer
             }
             else if (parts.length == 2)
             {
-                // Old format 2: boundaryTiles|innerTiles (no teleport whitelist)
                 region.setBoundaryTiles(deserializeTiles(parts[0]));
                 region.setInnerTiles(deserializeTiles(parts[1]));
                 region.setTeleportWhitelist(new HashSet<>());
             }
             else
             {
-                // Old format 1: just tiles (treat as boundary tiles for backward compatibility)
                 region.setBoundaryTiles(deserializeTiles(rest));
                 region.setInnerTiles(new HashSet<>());
                 region.setTeleportWhitelist(new HashSet<>());
             }
-            
-            // Pre-compute the cache so it's ready immediately (no lag on first access)
+
             region.ensureCacheComputed();
-            
             return region;
         }
         catch (Exception e)
@@ -235,7 +302,6 @@ public class RegionSerializer
                 Region region = deserializeRegion(line);
                 if (region != null)
                 {
-                    // Cache is already pre-computed in deserializeRegion
                     regions.add(region);
                 }
             }
@@ -245,6 +311,99 @@ public class RegionSerializer
             log.warn("Failed to deserialize regions from string: {}", str, e);
         }
         return regions;
+    }
+
+    private static class RegionData
+    {
+        String name;
+        List<BorderData> borders;
+        List<String> teleportWhitelist;
+    }
+
+    private static class BorderData
+    {
+        String name;
+        List<TileData> boundaryTiles;
+        List<TileData> innerTiles;
+        String propStyle;
+        String renderMode;
+        Integer lineColor;
+    }
+
+    private static class TileData
+    {
+        int x;
+        int y;
+        int plane;
+
+        @SuppressWarnings("unused")
+        TileData() { }
+
+        TileData(int x, int y, int plane)
+        {
+            this.x = x;
+            this.y = y;
+            this.plane = plane;
+        }
+    }
+
+    private static RegionLockEnforcerConfig.PropStyle mapPropStyle(String raw)
+    {
+        if (raw == null || raw.isEmpty())
+        {
+            return null;
+        }
+        try
+        {
+            return RegionLockEnforcerConfig.PropStyle.valueOf(raw);
+        }
+        catch (IllegalArgumentException ignored)
+        {
+            // legacy mappings
+            switch (raw)
+            {
+                case "OBJ_58598":
+                case "ROCK_SMALL":
+                case "CRYSTAL_PURPLE":
+                    return RegionLockEnforcerConfig.PropStyle.SEA_ROCK;
+                case "OBJ_17319":
+                case "ROCK_SMOOTH":
+                    return RegionLockEnforcerConfig.PropStyle.ROCK_WALL;
+                case "OBJ_6745":
+                case "SKULL_PILE":
+                    return RegionLockEnforcerConfig.PropStyle.IRON_FENCE;
+                case "OBJ_42889":
+                    return RegionLockEnforcerConfig.PropStyle.LOG_FENCE;
+                default:
+                    return null;
+            }
+        }
+    }
+
+    private static Border.RenderMode mapRenderMode(String raw)
+    {
+        if (raw == null || raw.isEmpty())
+        {
+            return null;
+        }
+        try
+        {
+            return Border.RenderMode.valueOf(raw);
+        }
+        catch (IllegalArgumentException ignored)
+        {
+            // legacy names from old config: LINES / ROCKS / BOTH
+            switch (raw)
+            {
+                case "LINES":
+                    return Border.RenderMode.LINES;
+                case "ROCKS":
+                case "BOTH": // best-effort: prefer props when both was set
+                    return Border.RenderMode.PROPS;
+                default:
+                    return null;
+            }
+        }
     }
 }
 

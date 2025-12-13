@@ -1,13 +1,10 @@
 package com.regionlockenforcer;
 
-import java.awt.Color;
 import java.awt.event.KeyEvent;
-import net.runelite.client.config.Alpha;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.Keybind;
-import net.runelite.client.config.Range;
 
 @ConfigGroup(RegionLockEnforcerConfig.GROUP)
 public interface RegionLockEnforcerConfig extends Config
@@ -44,35 +41,21 @@ public interface RegionLockEnforcerConfig extends Config
             description = "Enter/exit edit mode; shift-click to mark tiles",
             position = 4
     )
-    default Keybind toggleEditor() { return new Keybind(KeyEvent.VK_TAB, 0); }
+    default Keybind toggleEditor() { return new Keybind(KeyEvent.VK_F12, 0); }
 
-    @Alpha
-    @ConfigItem(
-            keyName = "borderColor",
-            name = "Border Colour",
-            description = "Colour of the border lines around marked tiles",
-            position = 5
-    )
-    default Color borderColor() { return new Color(255, 255, 0, 220); }
+    enum PropStyle
+    {
+        SEA_ROCK,
+        ROCK_WALL,
+        IRON_FENCE,
+        LOG_FENCE
+    }
 
-    @Alpha
-    @ConfigItem(
-            keyName = "editingColor",
-            name = "Editing Colour",
-            description = "Colour of marked tiles when in editing mode",
-            position = 6
-    )
-    default Color editingColor() { return new Color(255, 0, 0, 120); }
-
-    @Range(
-            min = 1,
-            max = 64
-    )
     @ConfigItem(
             keyName = "worldMapGridSize",
             name = "World Map Grid Size",
             description = "Tile width/height for the world map selection grid",
-            position = 7
+            position = 5
     )
     default int worldMapGridSize() { return 4; }
 }

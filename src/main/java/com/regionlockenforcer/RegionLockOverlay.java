@@ -9,16 +9,25 @@ import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.Polygon;
 import java.awt.Stroke;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.Comparator;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.Model;
+import net.runelite.api.RuneLiteObject;
 import net.runelite.api.Perspective;
 import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.coords.WorldPoint;
+import net.runelite.client.callback.ClientThread;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
@@ -29,13 +38,22 @@ public class RegionLockOverlay extends Overlay
 {
     private final Client client;
     private final RegionLockEnforcerConfig config;
+    private final ClientThread clientThread;
     RegionLockEnforcerPlugin plugin; // set by plugin.startUp()
 
+    private static final Color DEFAULT_BORDER_COLOR = new Color(255, 255, 0, 220);
+    private static final Color DEFAULT_EDIT_COLOR = new Color(255, 0, 0, 120);
+
+    private final Map<WorldPoint, List<RuneLiteObject>> propObjects = new HashMap<>();
+    private final Set<PlacementInstance> lastPlacements = new HashSet<>();
+    private int lastPropHash = 0;
+
     @Inject
-    public RegionLockOverlay(Client client, RegionLockEnforcerConfig config)
+    public RegionLockOverlay(Client client, RegionLockEnforcerConfig config, ClientThread clientThread)
     {
         this.client = client;
         this.config = config;
+        this.clientThread = clientThread;
 
         setPosition(OverlayPosition.DYNAMIC);
         setPriority(OverlayPriority.HIGHEST); // deprecation warning is OK
@@ -47,43 +65,75 @@ public class RegionLockOverlay extends Overlay
     @Override
     public Dimension render(Graphics2D g)
     {
-        if (config.disableBorder() || plugin == null) return null;
+        if (config.disableBorder() || plugin == null)
+        {
+            clearPropObjects();
+            return null;
+        }
         if (client.getGameState() != GameState.LOGGED_IN || client.getLocalPlayer() == null) return null;
 
-        Set<WorldPoint> markedTiles = plugin.getCurrentRegion() != null 
-            ? new HashSet<>(plugin.getCurrentRegion().getBoundaryTiles()) 
-            : new HashSet<>();
         com.regionlockenforcer.Region currentProfile = plugin.getCurrentRegion();
-        boolean hasInnerTiles = currentProfile != null && !currentProfile.getInnerTiles().isEmpty();
-        
-        if (hasInnerTiles)
+        Border activeBorder = plugin.getActiveBorder();
+        boolean editing = plugin.isEditing();
+        List<PropPlacement> placements = new ArrayList<>();
+
+        if (currentProfile != null)
         {
-            // Draw border lines along inner edges when inner tiles are computed
-            if (!markedTiles.isEmpty())
+            if (editing && activeBorder != null)
             {
-                drawBorderLines(g, markedTiles);
+                for (WorldPoint wp : activeBorder.getBoundaryTiles())
+                {
+                    LocalPoint lp = LocalPoint.fromWorld(client, wp);
+                    if (lp == null) continue;
+
+                    Polygon tilePoly = Perspective.getCanvasTilePoly(client, lp);
+                    if (tilePoly != null)
+                    {
+                        Composite old = g.getComposite();
+                        g.setComposite(AlphaComposite.SrcOver.derive(0.7f));
+                        g.setColor(DEFAULT_EDIT_COLOR);
+                        g.fill(tilePoly);
+                        g.setComposite(old);
+                    }
+                }
+            }
+
+            // Draw finished borders (all of them) without copying into unions
+            for (Border border : currentProfile.getBorders())
+            {
+                if (border.getInnerTiles().isEmpty())
+                {
+                    continue;
+                }
+                Border.RenderMode mode = border.getRenderMode();
+                if (mode == Border.RenderMode.LINES)
+                {
+                    drawBorderLines(g, border.getBoundaryTiles(), border.getInnerTiles(), border.getLineColor());
+                }
+                if (mode == Border.RenderMode.PROPS)
+                {
+                    Set<WorldPoint> boundary = border.getBoundaryTiles();
+                    Set<WorldPoint> inner = border.getInnerTiles();
+                    PropDefinition def = getPropDefinition(resolvePropStyle(border));
+                    for (WorldPoint wp : boundary)
+                    {
+                        addPropPlacementsForTile(placements, wp, boundary, inner, def);
+                    }
+                }
+            }
+
+            if (!placements.isEmpty())
+            {
+                ensurePropObjects(placements);
+            }
+            else
+            {
+                clearPropObjects();
             }
         }
         else
         {
-            // Show marked tiles with editing color when inner tiles are not computed (edit mode)
-            for (WorldPoint wp : markedTiles)
-            {
-                // Convert the world tile to local/canvas
-                LocalPoint lp = LocalPoint.fromWorld(client, wp);
-                if (lp == null) continue;
-
-                // Fill the tile with editing color
-                Polygon tilePoly = Perspective.getCanvasTilePoly(client, lp);
-                if (tilePoly != null)
-                {
-                    Composite old = g.getComposite();
-                    g.setComposite(AlphaComposite.SrcOver.derive(0.7f));
-                    g.setColor(config.editingColor());
-                    g.fill(tilePoly);
-                    g.setComposite(old);
-                }
-            }
+            clearPropObjects();
         }
 
         // Show editing mode indicator - above player's head
@@ -134,20 +184,386 @@ public class RegionLockOverlay extends Overlay
     }
 
     /**
+     * Ensure RuneLite props exist for the provided placements.
+     */
+    private void ensurePropObjects(List<PropPlacement> placements)
+    {
+        if (placements == null || placements.isEmpty())
+        {
+            clearPropObjects();
+            return;
+        }
+
+        List<PlacementInstance> instances = new ArrayList<>();
+        for (PropPlacement p : placements)
+        {
+            PlacementInstance inst = new PlacementInstance(
+                p.point,
+                p.definition.getModelId(),
+                p.definition.getOrientationOffset(),
+                p.orientation,
+                p.offsetX,
+                p.offsetY
+            );
+            instances.add(inst);
+        }
+
+        instances.sort(Comparator
+            .comparingInt((PlacementInstance i) -> i.point.getPlane())
+            .thenComparingInt(i -> i.point.getX())
+            .thenComparingInt(i -> i.point.getY())
+            .thenComparingInt(i -> i.orientationBase)
+            .thenComparingInt(i -> i.offsetX)
+            .thenComparingInt(i -> i.offsetY)
+            .thenComparingInt(i -> i.modelId));
+
+        Set<PlacementInstance> newSet = new HashSet<>(instances);
+
+        int hash = 17;
+        for (PlacementInstance inst : newSet)
+        {
+            hash = 31 * hash + inst.hashCode();
+        }
+
+        if (hash == lastPropHash && lastPlacements.equals(newSet))
+        {
+            return;
+        }
+
+        lastPropHash = hash;
+        lastPlacements.clear();
+        lastPlacements.addAll(newSet);
+
+        clientThread.invokeLater(() -> rebuildPropObjectsInternal(instances));
+    }
+
+    private void addPropPlacementsForTile(List<PropPlacement> placements,
+                                          WorldPoint wp,
+                                          Set<WorldPoint> boundaryTiles,
+                                          Set<WorldPoint> innerTiles,
+                                          PropDefinition def)
+    {
+        if (boundaryTiles == null || def == null)
+        {
+            return;
+        }
+
+        Set<WorldPoint> inner = innerTiles != null ? innerTiles : Set.of();
+        int x = wp.getX();
+        int y = wp.getY();
+        int plane = wp.getPlane();
+
+        WorldPoint north = new WorldPoint(x, y + 1, plane);
+        WorldPoint east = new WorldPoint(x + 1, y, plane);
+        WorldPoint south = new WorldPoint(x, y - 1, plane);
+        WorldPoint west = new WorldPoint(x - 1, y, plane);
+
+        boolean outN = isOutsideTile(north, boundaryTiles, inner);
+        boolean outE = isOutsideTile(east, boundaryTiles, inner);
+        boolean outS = isOutsideTile(south, boundaryTiles, inner);
+        boolean outW = isOutsideTile(west, boundaryTiles, inner);
+
+        int rotateRepeat = 512; // rotate one edge clockwise for visual alignment (repeat props)
+        int rotateSingle = 0;   // keep original orientation for single props
+        int shift = 24; // local units (~128 per tile)
+        boolean repeat = isRepeatPerEdge(def);
+        boolean placeOutside = isPlaceOutside(def);
+        int outsideShift = 96; // push into the outside tile for placeOutside props
+
+        if (repeat || placeOutside) // treat placeOutside as repeat with outside offset
+        {
+            int off = placeOutside ? outsideShift : shift;
+            if (outN) placements.add(new PropPlacement(wp, (0 + rotateRepeat) % 2048, def, 0, off));
+            if (outE) placements.add(new PropPlacement(wp, (512 + rotateRepeat) % 2048, def, off, 0));
+            if (outS) placements.add(new PropPlacement(wp, (1024 + rotateRepeat) % 2048, def, 0, -off));
+            if (outW) placements.add(new PropPlacement(wp, (1536 + rotateRepeat) % 2048, def, -off, 0));
+        }
+        else
+        {
+            if (outN)
+            {
+                int off = placeOutside ? outsideShift : 0;
+                placements.add(new PropPlacement(wp, (0 + rotateSingle) % 2048, def, 0, off));
+                return;
+            }
+            if (outE)
+            {
+                int off = placeOutside ? outsideShift : 0;
+                placements.add(new PropPlacement(wp, (512 + rotateSingle) % 2048, def, off, 0));
+                return;
+            }
+            if (outS)
+            {
+                int off = placeOutside ? -outsideShift : 0;
+                placements.add(new PropPlacement(wp, (1024 + rotateSingle) % 2048, def, 0, off));
+                return;
+            }
+            if (outW)
+            {
+                int off = placeOutside ? -outsideShift : 0;
+                placements.add(new PropPlacement(wp, (1536 + rotateSingle) % 2048, def, off, 0));
+                return;
+            }
+            // fully enclosed, drop one default
+            placements.add(new PropPlacement(wp, (0 + rotateSingle) % 2048, def, 0, 0));
+        }
+    }
+
+    private boolean isRepeatPerEdge(PropDefinition def)
+    {
+        if (def == null)
+        {
+            return false;
+        }
+        int modelId = def.getModelId();
+        return modelId == 42889 || modelId == 6745 || modelId == 58598 || modelId == 17319; // repeat per outward edge
+    }
+
+    private boolean isPlaceOutside(PropDefinition def)
+    {
+        if (def == null)
+        {
+            return false;
+        }
+        int modelId = def.getModelId();
+        return modelId == 58598 || modelId == 17319; // Sea Rock and Rock Wall: repeat per edge with larger outward offset
+    }
+
+    /**
+     * Remove all active prop RuneLiteObjects.
+     */
+    public void clearPropObjects()
+    {
+        lastPropHash = 0;
+        lastPlacements.clear();
+
+        Runnable deactivate = () -> {
+            for (List<RuneLiteObject> objs : propObjects.values())
+            {
+                for (RuneLiteObject obj : objs)
+                {
+                    obj.setActive(false);
+                }
+            }
+            propObjects.clear();
+        };
+
+        if (client.isClientThread())
+        {
+            deactivate.run();
+        }
+        else
+        {
+            clientThread.invokeLater(deactivate);
+        }
+    }
+
+    private void rebuildPropObjectsInternal(List<PlacementInstance> instances)
+    {
+        if (instances == null || instances.isEmpty())
+        {
+            clearPropObjects();
+            return;
+        }
+
+        clearPropObjects();
+
+        Map<Integer, Model> modelCache = new HashMap<>();
+
+        for (PlacementInstance instKey : instances)
+        {
+            WorldPoint wp = instKey.point;
+
+            Model model = modelCache.computeIfAbsent(instKey.modelId, id -> client.loadModel(id));
+            if (model == null)
+            {
+                continue;
+            }
+
+            Collection<WorldPoint> localInstances = WorldPoint.toLocalInstance(client, wp);
+            if (localInstances == null || localInstances.isEmpty())
+            {
+                continue;
+            }
+
+            for (WorldPoint inst : localInstances)
+            {
+                LocalPoint lp = LocalPoint.fromWorld(client, inst);
+                if (lp == null)
+                {
+                    continue;
+                }
+
+                RuneLiteObject obj = client.createRuneLiteObject();
+                obj.setModel(model);
+                obj.setLocation(new LocalPoint(lp.getX() + instKey.offsetX, lp.getY() + instKey.offsetY), inst.getPlane());
+                obj.setOrientation((instKey.orientationBase + instKey.orientationOffset) % 2048);
+                obj.setActive(true);
+                propObjects.computeIfAbsent(wp, k -> new ArrayList<>()).add(obj);
+            }
+        }
+    }
+
+    @SuppressWarnings("unused")
+    private int computeOutwardOrientation(WorldPoint wp,
+                                   Set<WorldPoint> boundaryTiles,
+                                   Set<WorldPoint> innerTiles)
+    {
+        if (boundaryTiles == null)
+        {
+            return 0;
+        }
+
+        Set<WorldPoint> inner = innerTiles != null ? innerTiles : Set.of();
+
+        int x = wp.getX();
+        int y = wp.getY();
+        int plane = wp.getPlane();
+
+        WorldPoint north = new WorldPoint(x, y + 1, plane);
+        WorldPoint east = new WorldPoint(x + 1, y, plane);
+        WorldPoint south = new WorldPoint(x, y - 1, plane);
+        WorldPoint west = new WorldPoint(x - 1, y, plane);
+
+        if (isOutsideTile(north, boundaryTiles, inner))
+        {
+            return 0;
+        }
+        if (isOutsideTile(east, boundaryTiles, inner))
+        {
+            return 512;
+        }
+        if (isOutsideTile(south, boundaryTiles, inner))
+        {
+            return 1024;
+        }
+        if (isOutsideTile(west, boundaryTiles, inner))
+        {
+            return 1536;
+        }
+
+        // Fully surrounded (rare); default north
+        return 0;
+    }
+
+    private RegionLockEnforcerConfig.PropStyle resolvePropStyle(Border border)
+    {
+        RegionLockEnforcerConfig.PropStyle style = border != null ? border.getPropStyle() : null;
+        return style != null ? style : RegionLockEnforcerConfig.PropStyle.SEA_ROCK;
+    }
+
+    private PropDefinition getPropDefinition(RegionLockEnforcerConfig.PropStyle style)
+    {
+        switch (style)
+        {
+            case SEA_ROCK:
+                return new PropDefinition(58598, 0);
+            case ROCK_WALL:
+            return new PropDefinition(17319, 0);
+            case IRON_FENCE:
+                return new PropDefinition(6745, 0);
+            case LOG_FENCE:
+                return new PropDefinition(42889, 0);
+            default:
+                return new PropDefinition(58598, 0);
+        }
+    }
+
+    private static class PropPlacement
+    {
+        private final WorldPoint point;
+        private final int orientation;
+        private final PropDefinition definition;
+        private final int offsetX;
+        private final int offsetY;
+
+        PropPlacement(WorldPoint point, int orientation, PropDefinition definition, int offsetX, int offsetY)
+        {
+            this.point = point;
+            this.orientation = orientation;
+            this.definition = definition;
+            this.offsetX = offsetX;
+            this.offsetY = offsetY;
+        }
+    }
+
+    private static class PlacementInstance
+    {
+        private final WorldPoint point;
+        private final int modelId;
+        private final int orientationOffset;
+        private final int orientationBase;
+        private final int offsetX;
+        private final int offsetY;
+
+        PlacementInstance(WorldPoint point, int modelId, int orientationOffset, int orientationBase, int offsetX, int offsetY)
+        {
+            this.point = point;
+            this.modelId = modelId;
+            this.orientationOffset = orientationOffset;
+            this.orientationBase = orientationBase;
+            this.offsetX = offsetX;
+            this.offsetY = offsetY;
+        }
+
+        @Override
+        public boolean equals(Object o)
+        {
+            if (this == o) return true;
+            if (!(o instanceof PlacementInstance)) return false;
+            PlacementInstance other = (PlacementInstance) o;
+            return modelId == other.modelId
+                && orientationOffset == other.orientationOffset
+                && orientationBase == other.orientationBase
+                && offsetX == other.offsetX
+                && offsetY == other.offsetY
+                && point.equals(other.point);
+        }
+
+        @Override
+        public int hashCode()
+        {
+            int result = point.hashCode();
+            result = 31 * result + Integer.hashCode(modelId);
+            result = 31 * result + Integer.hashCode(orientationOffset);
+            result = 31 * result + Integer.hashCode(orientationBase);
+            result = 31 * result + Integer.hashCode(offsetX);
+            result = 31 * result + Integer.hashCode(offsetY);
+            return result;
+        }
+    }
+
+    private static class PropDefinition
+    {
+        private final int modelId;
+        private final int orientationOffset;
+
+        private PropDefinition(int modelId, int orientationOffset)
+        {
+            this.modelId = modelId;
+            this.orientationOffset = orientationOffset;
+        }
+
+        int getModelId()
+        {
+            return modelId;
+        }
+
+        int getOrientationOffset()
+        {
+            return orientationOffset;
+        }
+    }
+
+    /**
      * Draw lines along the outer edges of boundary tiles.
      * An edge is "outer" if:
      * 1. It belongs to a boundary tile (in markedTiles)
      * 2. The neighbor tile across that edge is outside (not in boundaryTiles AND not in innerTiles)
      */
-    private void drawBorderLines(Graphics2D g, Set<WorldPoint> markedTiles)
+    private void drawBorderLines(Graphics2D g, Set<WorldPoint> markedTiles, Set<WorldPoint> innerTiles, Color overrideColor)
     {
         if (markedTiles.isEmpty()) return;
-
-        // Get the inner tiles from the current profile
-        com.regionlockenforcer.Region currentProfile = plugin.getCurrentRegion();
-        if (currentProfile == null) return;
-        
-        Set<WorldPoint> innerTiles = currentProfile.getInnerTiles();
         if (innerTiles == null || innerTiles.isEmpty()) 
         {
             // If inner tiles are empty, we can't determine which edges are outer
@@ -166,7 +582,7 @@ public class RegionLockOverlay extends Overlay
 
         Stroke oldStroke = g.getStroke();
         g.setStroke(new BasicStroke(2.0f));
-        g.setColor(config.borderColor()); // Configurable border color
+        g.setColor(overrideColor != null ? overrideColor : DEFAULT_BORDER_COLOR); // per-border or default color
 
         for (WorldPoint wp : markedTiles)
         {

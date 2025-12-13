@@ -13,8 +13,8 @@ Open the sidebar panel to either create a new region, or import an existing one.
 - It will be automatically selected, but you can also select a different region from the list to activate it
 
 ### To create a region:
-- Select Create New Region and give it a name
-- You automatically enter editing mode
+- Click the '+' button in the Select Region section and give it a name
+- You can then add a border, and modify the Teleport Allow List
 - Ensure your Toggle Editor Hotkey is set in the settings
 
 #### To draw the border:
@@ -23,10 +23,12 @@ Open the sidebar panel to either create a new region, or import an existing one.
     - Shift click a marked tile to un-mark it
     - You can also do this on the world map, where it will mark grids that you can configure the size of in settings
     - Press your Toggle Editor Hotkey to exit/enter editing mode at will
-- When you are done, click 'Finish', and the program will automatically draw your border on the outer perimeter of your marked tiles. If you did not mark a fully enclosed shape, it will smart-complete it
+- When you are done, click 'Finish', and the program will automatically draw your border on the outer perimeter of the shape produced by your marked tiles. Note that your marked tiles must create an enclosed shape.
 - You can edit a previously 'Finished' border by clicking the edit icon in the side panel
+- You can change the styling (line colour, or use props) of each border individually by clicking the paint brush icon
+- Note that a region can have many distinct borders, if desired
 
-#### To define a teleports whitelist:
+#### To define a teleport allow list:
 - All teleports on this list will by disabled by default when the plugin is active
 - To enable a teleport, simply find it in the list and check the box
 

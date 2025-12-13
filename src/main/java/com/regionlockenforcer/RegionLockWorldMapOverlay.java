@@ -8,7 +8,6 @@ import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.Stroke;
 import java.awt.event.MouseEvent;
-import java.util.HashSet;
 import java.util.Set;
 import javax.inject.Inject;
 import javax.inject.Singleton;
@@ -37,6 +36,8 @@ public class RegionLockWorldMapOverlay extends Overlay
     private final ClientThread clientThread;
     private final RegionLockEnforcerConfig config;
     private RegionLockEnforcerPlugin plugin;
+    private static final Color DEFAULT_BORDER_COLOR = new Color(255, 255, 0, 220);
+    private static final Color DEFAULT_EDIT_COLOR = new Color(255, 0, 0, 120);
 
     @Inject
     private RegionLockWorldMapOverlay(Client client, ClientThread clientThread, RegionLockEnforcerConfig config)
@@ -73,20 +74,21 @@ public class RegionLockWorldMapOverlay extends Overlay
             return null;
         }
 
+        Border activeBorder = plugin.getActiveBorder();
         boolean editing = plugin.isEditing();
         int gridSize = getGridSize();
-        boolean hasInnerTiles = !currentProfile.getInnerTiles().isEmpty();
+        boolean hasInnerTiles = currentProfile.getBorders().stream().anyMatch(b -> !b.getInnerTiles().isEmpty());
 
         if (editing)
         {
-            drawChunkGrid(graphics, gridSize);
-            drawBorderTiles(graphics);
+            drawChunkGrid(graphics, gridSize, activeBorder);
+            drawEditingTiles(graphics, currentProfile, activeBorder);
             return null;
         }
 
         if (hasInnerTiles && config.displayBorderOnWorldMap())
         {
-            drawBorderTiles(graphics);
+            drawFinishedTiles(graphics, currentProfile);
         }
 
         return null;
@@ -97,7 +99,7 @@ public class RegionLockWorldMapOverlay extends Overlay
      * Based on region-locker plugin implementation.
      * Uses WorldMap API directly for proper coordinate conversion.
      */
-    private void drawChunkGrid(Graphics2D graphics, int gridSize)
+    private void drawChunkGrid(Graphics2D graphics, int gridSize, Border activeBorder)
     {
         WorldMapRenderContext context = buildWorldMapRenderContext();
         if (context == null)
@@ -126,9 +128,7 @@ public class RegionLockWorldMapOverlay extends Overlay
         graphics.setStroke(new BasicStroke(1.0f));
         graphics.setColor(Color.BLACK);
 
-        // Get current border profile to check for selected chunks
-        Region currentProfile = plugin.getCurrentRegion();
-        boolean hasSelectedAreas = currentProfile != null && !currentProfile.getBoundaryTiles().isEmpty();
+        boolean hasSelectedAreas = activeBorder != null && !activeBorder.getBoundaryTiles().isEmpty();
 
         // Draw chunk grid lines and fill selected chunks
         for (int x = xRegionMin; x < xRegionMax; x += gridSize)
@@ -144,9 +144,9 @@ public class RegionLockWorldMapOverlay extends Overlay
                 yPos -= regionPixelSize;
 
                 // Check if this chunk is fully selected
-                if (hasSelectedAreas)
+                if (hasSelectedAreas && activeBorder != null)
                 {
-                    if (currentProfile.isAreaFullyContained(x, y, 0, gridSize))
+                    if (activeBorder.isAreaFullyContained(x, y, 0, gridSize))
                     {
                         // Fill with semi-transparent dark grey/black
                         graphics.setColor(new Color(20, 20, 20, 140));
@@ -166,10 +166,43 @@ public class RegionLockWorldMapOverlay extends Overlay
      * Draw individual border tiles on the world map.
      * Shows finished border (innerTiles) or marked tiles when in edit mode.
      */
-    private void drawBorderTiles(Graphics2D graphics)
+    private void drawEditingTiles(Graphics2D graphics, Region currentProfile, Border activeBorder)
     {
         WorldMapRenderContext context = buildWorldMapRenderContext();
         if (context == null)
+        {
+            return;
+        }
+
+        if (activeBorder == null)
+        {
+            return;
+        }
+
+            drawTiles(graphics, context, activeBorder.getBoundaryTiles(), DEFAULT_EDIT_COLOR);
+    }
+
+    private void drawFinishedTiles(Graphics2D graphics, Region currentProfile)
+    {
+        WorldMapRenderContext context = buildWorldMapRenderContext();
+        if (context == null)
+        {
+            return;
+        }
+
+        for (Border border : currentProfile.getBorders())
+        {
+            if (border.getInnerTiles().isEmpty())
+            {
+                continue;
+            }
+                drawTiles(graphics, context, border.getBoundaryTiles(), DEFAULT_BORDER_COLOR);
+        }
+    }
+
+    private void drawTiles(Graphics2D graphics, WorldMapRenderContext context, Set<WorldPoint> tilesToDraw, Color tileColor)
+    {
+        if (tilesToDraw == null || tilesToDraw.isEmpty())
         {
             return;
         }
@@ -180,72 +213,36 @@ public class RegionLockWorldMapOverlay extends Overlay
 
         graphics.setClip(worldMapRect);
 
-        Region currentProfile = plugin.getCurrentRegion();
-        if (currentProfile == null) return;
-
-        // Determine which tiles to show and what color to use
-        Set<WorldPoint> tilesToShow;
-        Color tileColor;
-        boolean isEditing = plugin.isEditing();
-        boolean hasInnerTiles = !currentProfile.getInnerTiles().isEmpty();
-        
-        if (isEditing)
-        {
-            // In edit mode: show marked boundary tiles in editing color
-            tilesToShow = currentProfile.getBoundaryTiles();
-            tileColor = config.editingColor();
-        }
-        else if (hasInnerTiles)
-        {
-            // Finished border: show boundary tiles in config color
-            tilesToShow = currentProfile.getBoundaryTiles();
-            tileColor = config.borderColor();
-        }
-        else
-        {
-            // No tiles to show
-            return;
-        }
-
-        Set<WorldPoint> tilesToDraw = new HashSet<>(tilesToShow);
-        if (tilesToDraw.isEmpty()) return;
-
         int widthInTiles = (int) Math.ceil(worldMapRect.getWidth() / pixelsPerTile);
         int heightInTiles = (int) Math.ceil(worldMapRect.getHeight() / pixelsPerTile);
-        
+
         int yTileMin = worldMapPosition.getY() - heightInTiles / 2;
         int xTileMin = worldMapPosition.getX() - widthInTiles / 2;
         int xTileMax = worldMapPosition.getX() + widthInTiles / 2;
         int yTileMax = worldMapPosition.getY() + heightInTiles / 2;
 
-        // Draw each tile
         graphics.setColor(tileColor);
-        int tilePixelSize = Math.max(1, (int) pixelsPerTile); // At least 1 pixel per tile
-        
+        int tilePixelSize = Math.max(1, (int) pixelsPerTile);
+
         for (WorldPoint tile : tilesToDraw)
         {
-            // Only draw tiles on plane 0 (surface) for now
             if (tile.getPlane() != 0) continue;
-            
+
             int tileX = tile.getX();
             int tileY = tile.getY();
-            
-            // Check if tile is visible in current view
+
             if (tileX < xTileMin || tileX > xTileMax || tileY < yTileMin || tileY > yTileMax)
             {
                 continue;
             }
-            
-            // Calculate position on map using same approach as chunk grid
+
             int yTileOffset = -(yTileMin - tileY);
             int xTileOffset = tileX + widthInTiles / 2 - (int)worldMapPosition.getX();
-            
+
             int xPos = ((int) (xTileOffset * pixelsPerTile)) + (int) worldMapRect.getX();
             int yPos = (worldMapRect.height - (int) (yTileOffset * pixelsPerTile)) + (int) worldMapRect.getY();
-            // Adjust Y position to match chunk grid coordinate system
             yPos -= (int) pixelsPerTile;
-            
-            // Draw tile as a small rectangle
+
             graphics.fillRect(xPos, yPos, tilePixelSize, tilePixelSize);
         }
     }
@@ -269,16 +266,13 @@ public class RegionLockWorldMapOverlay extends Overlay
             return false;
         }
 
-        if (plugin == null || !plugin.isEditing() || plugin.getCurrentRegion() == null)
+        Border activeBorder = plugin.getActiveBorder();
+        if (plugin == null || !plugin.isEditing() || plugin.getCurrentRegion() == null || activeBorder == null)
         {
             return false;
         }
 
         final int tileGroupSize = getGridSize();
-
-        // Store mouse point for use on client thread
-        Point mousePoint = e.getPoint();
-        final Point finalMousePoint = new Point(mousePoint);
 
         // All widget access must be on client thread
         // Use a wrapper to capture the result from invoke()
@@ -286,6 +280,12 @@ public class RegionLockWorldMapOverlay extends Overlay
 
         clientThread.invoke(() ->
         {
+            Point clickPoint = getMouseCanvasPoint(e);
+            if (clickPoint == null)
+            {
+                return;
+            }
+
             WorldMapRenderContext context = buildWorldMapRenderContext();
             if (context == null)
             {
@@ -293,12 +293,12 @@ public class RegionLockWorldMapOverlay extends Overlay
             }
 
             Rectangle mapBounds = context.getMapBounds();
-            if (mapBounds == null || !mapBounds.contains(finalMousePoint))
+            if (mapBounds == null || !mapBounds.contains(clickPoint))
             {
                 return;
             }
 
-            WorldPoint worldPoint = screenToWorldPoint(finalMousePoint, context);
+            WorldPoint worldPoint = screenToWorldPoint(clickPoint, context);
             if (worldPoint == null)
             {
                 return;
@@ -310,29 +310,44 @@ public class RegionLockWorldMapOverlay extends Overlay
             int plane = worldPoint.getPlane();
 
             Region currentProfile = plugin.getCurrentRegion();
-            if (currentProfile == null)
+            Border border = plugin.getActiveBorder();
+            if (currentProfile == null || border == null)
             {
                 return;
             }
 
-            boolean areaHasTiles = currentProfile.hasAnyTileInArea(baseX, baseY, plane, tileGroupSize);
+            boolean areaHasTiles = border.hasAnyTileInArea(baseX, baseY, plane, tileGroupSize);
 
             if (areaHasTiles)
             {
-                currentProfile.removeArea(baseX, baseY, plane, tileGroupSize);
+                border.removeArea(baseX, baseY, plane, tileGroupSize);
             }
             else
             {
-                currentProfile.addArea(baseX, baseY, plane, tileGroupSize);
+                border.addArea(baseX, baseY, plane, tileGroupSize);
             }
 
-            plugin.saveRegions();
-            plugin.notifyRegionsChanged();
+            currentProfile.invalidateClickableTilesCache();
+            plugin.markUnsavedEdits();
 
             shouldHandle[0] = true;
         });
 
         return shouldHandle[0];
+    }
+
+    /**
+     * Use the client's mouse canvas position when available so Stretched Mode
+     * scaling is taken into account. Falls back to the raw event point.
+     */
+    private Point getMouseCanvasPoint(MouseEvent e)
+    {
+        net.runelite.api.Point mouseCanvasPos = client.getMouseCanvasPosition();
+        if (mouseCanvasPos != null)
+        {
+            return new Point(mouseCanvasPos.getX(), mouseCanvasPos.getY());
+        }
+        return e != null ? e.getPoint() : null;
     }
 
     private WorldMapRenderContext buildWorldMapRenderContext()

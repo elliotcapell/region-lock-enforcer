@@ -69,11 +69,15 @@ public class RegionLockEnforcerPlugin extends Plugin
     // Region management
     @Getter private final List<Region> regions = new ArrayList<>();
     @Getter private Region currentRegion = null;
+    @Getter private Border currentBorder = null;
 
     // Current lock profile (contains menu rules, quest filters, etc.)
     @Getter private LockProfile currentProfile = new LockProfile();
 
     final EditorInput editor = new EditorInput();
+
+    // Track unsaved edits while in edit mode
+    private boolean hasUnsavedEdits = false;
     
     // Charter ship interface caching
     private int lastCharterShipWidgetId = -1; // Cache the widget ID once found
@@ -143,6 +147,7 @@ public class RegionLockEnforcerPlugin extends Plugin
     @Override protected void shutDown()
     {
         saveRegions();
+        overlay.clearPropObjects();
         overlayManager.remove(overlay);
         overlayManager.remove(worldMapOverlay);
         // Unregister world map mouse listener
@@ -1211,7 +1216,9 @@ public class RegionLockEnforcerPlugin extends Plugin
         boolean shiftDown = client.isKeyPressed(KeyCode.KC_SHIFT);
 
         // Editor: shift-click toggles tile marking (mark if unmarked, unmark if marked)
-        if (editor.editing && shiftDown && wp != null && currentRegion != null
+        Border editingBorder = getActiveBorder();
+
+        if (editor.editing && shiftDown && wp != null && currentRegion != null && editingBorder != null
                 && (typeId == MenuAction.WALK.getId()
                 || typeId == MenuAction.GAME_OBJECT_FIRST_OPTION.getId()
                 || typeId == MenuAction.GROUND_ITEM_FIRST_OPTION.getId()
@@ -1219,18 +1226,18 @@ public class RegionLockEnforcerPlugin extends Plugin
         {
             e.consume();
             // Toggle: if marked, unmark it; if unmarked, mark it
-            if (currentRegion.getBoundaryTiles().contains(wp))
+            if (editingBorder.getBoundaryTiles().contains(wp))
             {
-                currentRegion.removeTile(wp);
+                editingBorder.removeTile(wp);
             }
             else
             {
-                currentRegion.addTile(wp);
+                editingBorder.addTile(wp);
             }
                 // Clear inner tiles when boundary changes
-            currentRegion.getInnerTiles().clear();
-            saveRegions(); // Save immediately on change
-            notifyRegionsChanged();
+            editingBorder.getInnerTiles().clear();
+            currentRegion.invalidateClickableTilesCache();
+            hasUnsavedEdits = true; // defer save until exiting edit mode
             return;
         }
 
@@ -1254,7 +1261,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         // Block ALL clicks outside the bordered region (only when inner tiles are computed)
         // Only block within normal surface map bounds (excludes underground, instances, upper/lower floors)
         // Only block game world actions (WALK, GAME_OBJECT, GROUND_ITEM, NPC, etc.), not UI actions, player interactions, or "Walk here" on players
-        if (wp != null && currentRegion != null && !currentRegion.getInnerTiles().isEmpty())
+        if (wp != null && currentRegion != null && !currentRegion.getAllInnerTiles().isEmpty())
         {
             // Only apply click blocking within normal surface map bounds
             if (isWithinSurfaceBounds(wp))
@@ -1386,7 +1393,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         // Remove ALL menu entries for tiles outside the border (only when inner tiles are computed)
         // Only filter within normal surface map bounds (excludes underground, instances, upper/lower floors)
         // Whitelist approach: filter everything, then explicitly allow only UI actions, player interactions, and "Walk here" on players
-        if (hoveredWp != null && !editor.editing && currentRegion != null && !currentRegion.getInnerTiles().isEmpty())
+        if (hoveredWp != null && !editor.editing && currentRegion != null && !currentRegion.getAllInnerTiles().isEmpty())
         {
             // Only apply menu filtering within normal surface map bounds
             if (isWithinSurfaceBounds(hoveredWp))
@@ -1435,12 +1442,13 @@ public class RegionLockEnforcerPlugin extends Plugin
             { 
                 // Only allow toggle if current profile is in edit mode (has no inner tiles)
                 // If profile is finished (has inner tiles), don't allow toggle
-                if (currentRegion != null && currentRegion.getInnerTiles().isEmpty())
+                Border border = getActiveBorder();
+                if (border != null && border.getInnerTiles().isEmpty())
                 {
                     editing = !editing;
                 }
-                // If no region exists, create one and enable editing
-                else if (currentRegion == null)
+                // If no border exists, create one and enable editing
+                else if (border == null)
                 {
                     createRegion(null); // Will auto-generate name
                     editing = true;
@@ -1685,7 +1693,10 @@ public class RegionLockEnforcerPlugin extends Plugin
             }
             
             regions.add(imported);
+            // Ensure importing a region never leaves the user in editing mode
+            setEditing(false);
             currentRegion = imported;
+            currentBorder = imported.getBorders().isEmpty() ? null : imported.getBorders().get(0);
             saveRegions();
             notifyRegionsChanged();
             
@@ -1724,18 +1735,34 @@ public class RegionLockEnforcerPlugin extends Plugin
         
         // Load selected region
         String selectedName = configManager.getConfiguration(RegionLockEnforcerConfig.GROUP, "selectedRegion");
-        if (selectedName != null && !selectedName.isEmpty())
+        if (selectedName != null)
         {
-            currentRegion = regions.stream()
-                    .filter(p -> p.getName().equals(selectedName))
-                    .findFirst()
-                    .orElse(null);
+            if (!selectedName.isEmpty())
+            {
+                currentRegion = regions.stream()
+                        .filter(p -> p.getName().equals(selectedName))
+                        .findFirst()
+                        .orElse(null);
+            }
+            else
+            {
+                currentRegion = null; // explicitly stored as off
+            }
         }
-        
-        // If no region selected but we have regions, select the first one
-        if (currentRegion == null && !regions.isEmpty())
+        else if (!regions.isEmpty())
         {
+            // Legacy behavior: default to first region when no prior selection is stored
             currentRegion = regions.get(0);
+        }
+
+        // Ensure a current border is selected
+        if (currentRegion != null)
+        {
+            currentBorder = currentRegion.getBorders().isEmpty() ? null : currentRegion.getBorders().get(0);
+        }
+        else
+        {
+            currentBorder = null;
         }
     }
 
@@ -1747,11 +1774,13 @@ public class RegionLockEnforcerPlugin extends Plugin
         String profilesStr = RegionSerializer.serializeRegions(regions);
         configManager.setConfiguration(RegionLockEnforcerConfig.GROUP, "regions", profilesStr);
         
-        if (currentRegion != null)
-        {
-            configManager.setConfiguration(RegionLockEnforcerConfig.GROUP, "selectedRegion", currentRegion.getName());
-        }
+        configManager.setConfiguration(
+            RegionLockEnforcerConfig.GROUP,
+            "selectedRegion",
+            currentRegion != null ? currentRegion.getName() : ""
+        );
     }
+
 
     /**
      * Create a new region with the given name.
@@ -1765,9 +1794,96 @@ public class RegionLockEnforcerPlugin extends Plugin
         Region profile = new Region(name.trim());
         regions.add(profile);
         currentRegion = profile;
+        currentBorder = profile.getBorders().isEmpty() ? null : profile.getBorders().get(0);
         saveRegions();
         notifyRegionsChanged();
         return profile;
+    }
+
+    public Border createBorder(Region region, String name)
+    {
+        if (region == null)
+        {
+            return null;
+        }
+        String preferredName = name;
+        if (preferredName == null || preferredName.trim().isEmpty())
+        {
+            preferredName = "Border " + (region.getBorders().size() + 1);
+        }
+
+        Border border = region.addBorder(preferredName);
+        if (region == currentRegion)
+        {
+            currentBorder = border;
+        }
+        saveRegions();
+        notifyRegionsChanged();
+        return border;
+    }
+
+    public void deleteBorder(Region region, Border border)
+    {
+        if (region == null || border == null)
+        {
+            return;
+        }
+        boolean deletingActive = (region == currentRegion && border == currentBorder);
+        region.removeBorder(border);
+        if (region == currentRegion)
+        {
+            // Select another border if available
+            currentBorder = region.getBorders().isEmpty() ? null : region.getBorders().get(0);
+            if (deletingActive)
+            {
+                // Exit editing if the active border was deleted
+                setEditing(false);
+            }
+        }
+        saveRegions();
+        notifyRegionsChanged();
+    }
+
+    public void renameBorder(Border border, String newName)
+    {
+        if (border == null || newName == null || newName.trim().isEmpty())
+        {
+            return;
+        }
+        border.setName(newName.trim());
+        saveRegions();
+        notifyRegionsChanged();
+    }
+
+    public void renameRegion(Region region, String newName)
+    {
+        if (region == null || newName == null || newName.trim().isEmpty())
+        {
+            return;
+        }
+        region.setName(newName.trim());
+        saveRegions();
+        notifyRegionsChanged();
+    }
+
+    public void selectBorder(Border border)
+    {
+        if (border == null)
+        {
+            return;
+        }
+        currentBorder = border;
+        saveRegions();
+        notifyRegionsChanged();
+    }
+
+    public Border getActiveBorder()
+    {
+        if (currentBorder == null && currentRegion != null)
+        {
+            currentBorder = currentRegion.getBorders().isEmpty() ? null : currentRegion.getBorders().get(0);
+        }
+        return currentBorder;
     }
 
     /**
@@ -1796,7 +1912,19 @@ public class RegionLockEnforcerPlugin extends Plugin
      */
     public void setEditing(boolean editing)
     {
+        boolean wasEditing = editor.editing;
         editor.editing = editing;
+        if (wasEditing && !editing && hasUnsavedEdits)
+        {
+            saveRegions();
+            notifyRegionsChanged();
+            hasUnsavedEdits = false;
+        }
+    }
+
+    public void markUnsavedEdits()
+    {
+        hasUnsavedEdits = true;
     }
     
     /**
@@ -1913,22 +2041,29 @@ public class RegionLockEnforcerPlugin extends Plugin
      * Re-enable editing mode for a border profile by clearing inner tiles.
      * This returns the border to the state before "Finish" was clicked.
      */
-    public void enableEditingMode(Region profile)
+    public void enableEditingMode(Border border)
     {
-        if (profile == null) return;
-        
-        // Clear inner tiles to return to darkened tile mode
-        profile.setInnerTiles(new HashSet<>());
-        
-        // Enable editing mode AND toggle editing on
+        if (border == null) return;
+
+        border.setInnerTiles(new HashSet<>());
+
         editor.editing = true;
-        
-        // Select this profile if not already selected
-        if (currentRegion != profile)
+
+        if (currentRegion != null && !currentRegion.getBorders().contains(border))
         {
-            currentRegion = profile;
+            // If the border isn't part of the current region, attempt to find and select its region
+            for (Region region : regions)
+            {
+                if (region.getBorders().contains(border))
+                {
+                    currentRegion = region;
+                    break;
+                }
+            }
         }
-        
+
+        currentBorder = border;
+
         saveRegions();
         notifyRegionsChanged();
     }
@@ -1939,15 +2074,36 @@ public class RegionLockEnforcerPlugin extends Plugin
     public void selectRegion(String name)
     {
         if (name == null) return;
-        currentRegion = regions.stream()
+        Region match = regions.stream()
                 .filter(p -> p.getName().equals(name))
                 .findFirst()
                 .orElse(null);
-        if (currentRegion != null)
+        setActiveRegion(match);
+    }
+
+    /**
+     * Activate the provided region and deactivate all others.
+     */
+    public void setActiveRegion(Region region)
+    {
+        currentRegion = region;
+        currentBorder = region != null && !region.getBorders().isEmpty()
+            ? region.getBorders().get(0)
+            : null;
+        if (region == null)
         {
-            saveRegions();
-            notifyRegionsChanged();
+            setEditing(false);
         }
+        saveRegions();
+        notifyRegionsChanged();
+    }
+
+    /**
+     * Clear any active region (allow zero active).
+     */
+    public void clearActiveRegion()
+    {
+        setActiveRegion(null);
     }
 
     /**
@@ -1963,6 +2119,9 @@ public class RegionLockEnforcerPlugin extends Plugin
             if (currentRegion != null && currentRegion.getName().equals(name))
             {
                 currentRegion = regions.isEmpty() ? null : regions.get(0);
+                currentBorder = currentRegion != null && !currentRegion.getBorders().isEmpty()
+                    ? currentRegion.getBorders().get(0)
+                    : null;
             }
             saveRegions();
             notifyRegionsChanged();
@@ -2020,20 +2179,20 @@ public class RegionLockEnforcerPlugin extends Plugin
      * Compute all inner tiles (tiles inside the boundary) using an exterior flood fill.
      * This enforces that the user draws a fully bounded shape.
      *
-     * @param profile The region to compute inner tiles for
+     * @param border The border to compute inner tiles for
      * @return true if computation was successful, false if the border is not fully enclosed
      */
-    public boolean computeInnerTiles(Region profile)
+    public boolean computeInnerTiles(Border border)
     {
-        if (profile == null)
+        if (border == null)
         {
             return false;
         }
 
-        Set<WorldPoint> boundaryTiles = profile.getBoundaryTiles();
+        Set<WorldPoint> boundaryTiles = border.getBoundaryTiles();
         if (boundaryTiles.isEmpty())
         {
-            profile.setInnerTiles(new HashSet<>());
+            border.setInnerTiles(new HashSet<>());
             return false;
         }
 
@@ -2044,18 +2203,18 @@ public class RegionLockEnforcerPlugin extends Plugin
 
         if (samePlaneBoundary.isEmpty())
         {
-            profile.setInnerTiles(new HashSet<>());
+            border.setInnerTiles(new HashSet<>());
             return false;
         }
 
         Set<WorldPoint> innerTiles = computeInteriorTiles(samePlaneBoundary, plane);
         if (innerTiles.isEmpty())
         {
-            profile.setInnerTiles(new HashSet<>());
+            border.setInnerTiles(new HashSet<>());
             return false;
         }
 
-        profile.setInnerTiles(innerTiles);
+        border.setInnerTiles(innerTiles);
 
         Set<WorldPoint> solidTiles = new HashSet<>(innerTiles);
         solidTiles.addAll(samePlaneBoundary);
@@ -2069,8 +2228,12 @@ public class RegionLockEnforcerPlugin extends Plugin
             }
         }
 
-        profile.getBoundaryTiles().clear();
-        profile.getBoundaryTiles().addAll(borderTiles);
+        border.getBoundaryTiles().clear();
+        border.getBoundaryTiles().addAll(borderTiles);
+        if (currentRegion != null)
+        {
+            currentRegion.invalidateClickableTilesCache();
+        }
 
         return true;
     }
@@ -2237,12 +2400,22 @@ public class RegionLockEnforcerPlugin extends Plugin
             // Create a serializable version of the profile
             RegionExport exportData = new RegionExport();
             exportData.name = exportName;
-            exportData.boundaryTiles = profile.getBoundaryTiles().stream()
-                .map(wp -> new TileData(wp.getX(), wp.getY(), wp.getPlane()))
-                .collect(java.util.stream.Collectors.toList());
-            exportData.innerTiles = profile.getInnerTiles().stream()
-                .map(wp -> new TileData(wp.getX(), wp.getY(), wp.getPlane()))
-                .collect(java.util.stream.Collectors.toList());
+            exportData.borders = new java.util.ArrayList<>();
+            for (Border border : profile.getBorders())
+            {
+                BorderExport be = new BorderExport();
+                be.name = border.getName();
+                be.boundaryTiles = border.getBoundaryTiles().stream()
+                    .map(wp -> new TileData(wp.getX(), wp.getY(), wp.getPlane()))
+                    .collect(java.util.stream.Collectors.toList());
+                be.innerTiles = border.getInnerTiles().stream()
+                    .map(wp -> new TileData(wp.getX(), wp.getY(), wp.getPlane()))
+                    .collect(java.util.stream.Collectors.toList());
+                be.renderMode = border.getRenderMode() != null ? border.getRenderMode().name() : null;
+                be.propStyle = border.getPropStyle() != null ? border.getPropStyle().name() : null;
+                be.lineColor = border.getLineColor() != null ? border.getLineColor().getRGB() : null;
+                exportData.borders.add(be);
+            }
             exportData.teleportWhitelist = new java.util.ArrayList<>(
                 profile.getTeleportWhitelist() != null ? profile.getTeleportWhitelist() : java.util.Collections.emptySet());
             
@@ -2294,22 +2467,75 @@ public class RegionLockEnforcerPlugin extends Plugin
             }
             
             Region profile = new Region(regionName);
-            
-            // Convert tile data back to WorldPoints
-            Set<WorldPoint> boundaryTiles = exportData.boundaryTiles != null
-                ? exportData.boundaryTiles.stream()
-                    .map(td -> new WorldPoint(td.x, td.y, td.plane))
-                    .collect(java.util.stream.Collectors.toSet())
-                : new HashSet<>();
-            profile.setBoundaryTiles(boundaryTiles);
-            
-            Set<WorldPoint> innerTiles = exportData.innerTiles != null
-                ? exportData.innerTiles.stream()
-                    .map(td -> new WorldPoint(td.x, td.y, td.plane))
-                    .collect(java.util.stream.Collectors.toSet())
-                : new HashSet<>();
-            profile.setInnerTiles(innerTiles);
-            
+
+            java.util.List<Border> borders = new java.util.ArrayList<>();
+            if (exportData.borders != null && !exportData.borders.isEmpty())
+            {
+                for (BorderExport be : exportData.borders)
+                {
+                    Border border = new Border(be != null && be.name != null ? be.name : "Border");
+                    Set<WorldPoint> boundaryTiles = be != null && be.boundaryTiles != null
+                        ? be.boundaryTiles.stream()
+                            .map(td -> new WorldPoint(td.x, td.y, td.plane))
+                            .collect(java.util.stream.Collectors.toSet())
+                        : new HashSet<>();
+                    Set<WorldPoint> innerTiles = be != null && be.innerTiles != null
+                        ? be.innerTiles.stream()
+                            .map(td -> new WorldPoint(td.x, td.y, td.plane))
+                            .collect(java.util.stream.Collectors.toSet())
+                        : new HashSet<>();
+                    border.setBoundaryTiles(boundaryTiles);
+                    border.setInnerTiles(innerTiles);
+                if (be != null)
+                {
+                    if (be.propStyle != null && !be.propStyle.isEmpty())
+                    {
+                        try
+                        {
+                            border.setPropStyle(RegionLockEnforcerConfig.PropStyle.valueOf(be.propStyle));
+                        }
+                        catch (IllegalArgumentException ignored)
+                        {
+                        }
+                    }
+                    if (be.renderMode != null && !be.renderMode.isEmpty())
+                    {
+                        try
+                        {
+                            border.setRenderMode(Border.RenderMode.valueOf(be.renderMode));
+                        }
+                        catch (IllegalArgumentException ignored)
+                        {
+                        }
+                    }
+                    if (be.lineColor != null)
+                    {
+                        border.setLineColor(new java.awt.Color(be.lineColor, true));
+                    }
+                }
+                    borders.add(border);
+                }
+            }
+            else
+            {
+                // Legacy single-border export support
+                Set<WorldPoint> boundaryTiles = exportData.boundaryTiles != null
+                    ? exportData.boundaryTiles.stream()
+                        .map(td -> new WorldPoint(td.x, td.y, td.plane))
+                        .collect(java.util.stream.Collectors.toSet())
+                    : new HashSet<>();
+                Set<WorldPoint> innerTiles = exportData.innerTiles != null
+                    ? exportData.innerTiles.stream()
+                        .map(td -> new WorldPoint(td.x, td.y, td.plane))
+                        .collect(java.util.stream.Collectors.toSet())
+                    : new HashSet<>();
+                Border border = new Border("Border 1");
+                border.setBoundaryTiles(boundaryTiles);
+                border.setInnerTiles(innerTiles);
+                borders.add(border);
+            }
+            profile.setBorders(borders);
+
             profile.setTeleportWhitelist(exportData.teleportWhitelist != null
                 ? new HashSet<>(exportData.teleportWhitelist)
                 : new HashSet<>());
@@ -2357,9 +2583,20 @@ public class RegionLockEnforcerPlugin extends Plugin
     private static class RegionExport
     {
         String name;
+        List<BorderExport> borders;
+        List<TileData> boundaryTiles; // Legacy single-border export support
+        List<TileData> innerTiles;    // Legacy single-border export support
+        List<String> teleportWhitelist;
+    }
+
+    private static class BorderExport
+    {
+        String name;
         List<TileData> boundaryTiles;
         List<TileData> innerTiles;
-        List<String> teleportWhitelist;
+        String propStyle;
+        String renderMode;
+        Integer lineColor;
     }
 
     private static class TileData
