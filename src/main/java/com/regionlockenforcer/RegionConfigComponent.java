@@ -453,7 +453,7 @@ public class RegionConfigComponent extends JPanel
             BufferedImage img = loadPropThumbnail(style);
             if (img != null)
             {
-                java.awt.Image scaled = img.getScaledInstance(64, 64, java.awt.Image.SCALE_SMOOTH);
+                java.awt.Image scaled = img.getScaledInstance(96, 96, java.awt.Image.SCALE_SMOOTH);
                 b.setIcon(new javax.swing.ImageIcon(scaled));
             }
             else
