@@ -17,7 +17,6 @@ import net.runelite.api.coords.WorldPoint;
 public class RegionSerializer
 {
     private static final String VERSION_PREFIX = "v2|";
-    private static final Gson GSON = new Gson();
 
     /**
      * Serialize a WorldPoint to a string format: "x,y,plane"
@@ -120,7 +119,7 @@ public class RegionSerializer
     /**
      * Serialize a Region to a versioned string.
      */
-    public static String serializeRegion(Region region)
+    public static String serializeRegion(Region region, Gson gson)
     {
         if (region == null) return "";
         try
@@ -146,7 +145,7 @@ public class RegionSerializer
                 data.borders.add(bd);
             }
 
-            return VERSION_PREFIX + GSON.toJson(data);
+            return VERSION_PREFIX + gson.toJson(data);
         }
         catch (Exception e)
         {
@@ -159,7 +158,7 @@ public class RegionSerializer
      * Deserialize a Region from string format.
      * Supports v2 JSON format and legacy pipe-delimited formats.
      */
-    public static Region deserializeRegion(String str)
+    public static Region deserializeRegion(String str, Gson gson)
     {
         if (str == null || str.isEmpty()) return new Region();
         try
@@ -168,7 +167,7 @@ public class RegionSerializer
             if (str.startsWith(VERSION_PREFIX))
             {
                 String json = str.substring(VERSION_PREFIX.length());
-                RegionData data = GSON.fromJson(json, RegionData.class);
+                RegionData data = gson.fromJson(json, RegionData.class);
                 Region region = new Region(data != null && data.name != null ? data.name : "Untitled Region");
 
                 List<Border> borders = new ArrayList<>();
@@ -276,11 +275,11 @@ public class RegionSerializer
      * Serialize a list of Regions to string format.
      * Regions are separated by newlines.
      */
-    public static String serializeRegions(List<Region> regions)
+    public static String serializeRegions(List<Region> regions, Gson gson)
     {
         if (regions == null || regions.isEmpty()) return "";
         return regions.stream()
-                .map(RegionSerializer::serializeRegion)
+                .map(region -> RegionSerializer.serializeRegion(region, gson))
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.joining("\n"));
     }
@@ -289,7 +288,7 @@ public class RegionSerializer
      * Deserialize a list of Regions from string format.
      * Regions are separated by newlines.
      */
-    public static List<Region> deserializeRegions(String str)
+    public static List<Region> deserializeRegions(String str, Gson gson)
     {
         List<Region> regions = new ArrayList<>();
         if (str == null || str.isEmpty()) return regions;
@@ -299,7 +298,7 @@ public class RegionSerializer
             for (String line : lines)
             {
                 if (line.isEmpty()) continue;
-                Region region = deserializeRegion(line);
+                Region region = deserializeRegion(line, gson);
                 if (region != null)
                 {
                     regions.add(region);

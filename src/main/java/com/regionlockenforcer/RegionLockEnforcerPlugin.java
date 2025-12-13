@@ -1728,7 +1728,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         regions.clear();
         if (profilesStr != null && !profilesStr.isEmpty())
         {
-            List<Region> loaded = RegionSerializer.deserializeRegions(profilesStr);
+            List<Region> loaded = RegionSerializer.deserializeRegions(profilesStr, gson);
             // Cache is already pre-computed in deserializeRegion
             regions.addAll(loaded);
         }
@@ -1771,7 +1771,7 @@ public class RegionLockEnforcerPlugin extends Plugin
      */
     public void saveRegions()
     {
-        String profilesStr = RegionSerializer.serializeRegions(regions);
+        String profilesStr = RegionSerializer.serializeRegions(regions, gson);
         configManager.setConfiguration(RegionLockEnforcerConfig.GROUP, "regions", profilesStr);
         
         configManager.setConfiguration(
