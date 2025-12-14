@@ -199,8 +199,8 @@ public class RegionLockOverlay extends Overlay
         {
             PlacementInstance inst = new PlacementInstance(
                 p.point,
-                p.definition.getModelId(),
-                p.definition.getOrientationOffset(),
+                p.modelId,
+                p.orientationOffset,
                 p.orientation,
                 p.offsetX,
                 p.offsetY
@@ -315,8 +315,7 @@ public class RegionLockOverlay extends Overlay
         {
             return false;
         }
-        int modelId = def.getModelId();
-        return modelId == 42889 || modelId == 6745 || modelId == 58598 || modelId == 17319; // repeat per outward edge
+        return def.isRepeatPerEdge();
     }
 
     private boolean isPlaceOutside(PropDefinition def)
@@ -325,8 +324,7 @@ public class RegionLockOverlay extends Overlay
         {
             return false;
         }
-        int modelId = def.getModelId();
-        return modelId == 58598 || modelId == 17319; // Sea Rock and Rock Wall: repeat per edge with larger outward offset
+        return def.isPlaceOutside();
     }
 
     /**
@@ -457,15 +455,20 @@ public class RegionLockOverlay extends Overlay
         switch (style)
         {
             case SEA_ROCK:
-                return new PropDefinition(58598, 0);
+                return PropDefinition.randomized(
+                    new int[]{58596, 58597, 58598, 58599, 58600, 58601},
+                    /*repeatPerEdge=*/true,
+                    /*placeOutside=*/true,
+                    /*randomOrientation=*/true
+                );
             case ROCK_WALL:
-            return new PropDefinition(17319, 0);
+                return PropDefinition.fixed(17319, /*repeatPerEdge=*/true, /*placeOutside=*/true);
             case IRON_FENCE:
-                return new PropDefinition(6745, 0);
+                return PropDefinition.fixed(6745, /*repeatPerEdge=*/true, /*placeOutside=*/false);
             case LOG_FENCE:
-                return new PropDefinition(42889, 0);
+                return PropDefinition.fixed(42889, /*repeatPerEdge=*/true, /*placeOutside=*/false);
             default:
-                return new PropDefinition(58598, 0);
+                return PropDefinition.fixed(58598, /*repeatPerEdge=*/true, /*placeOutside=*/true);
         }
     }
 
@@ -473,17 +476,19 @@ public class RegionLockOverlay extends Overlay
     {
         private final WorldPoint point;
         private final int orientation;
-        private final PropDefinition definition;
         private final int offsetX;
         private final int offsetY;
+        private final int modelId;
+        private final int orientationOffset;
 
         PropPlacement(WorldPoint point, int orientation, PropDefinition definition, int offsetX, int offsetY)
         {
             this.point = point;
             this.orientation = orientation;
-            this.definition = definition;
             this.offsetX = offsetX;
             this.offsetY = offsetY;
+            this.modelId = definition.resolveModelId(point);
+            this.orientationOffset = definition.resolveOrientationOffset(point);
         }
     }
 
@@ -535,23 +540,71 @@ public class RegionLockOverlay extends Overlay
 
     private static class PropDefinition
     {
-        private final int modelId;
-        private final int orientationOffset;
+        private final int[] modelIds;
+        private final boolean repeatPerEdge;
+        private final boolean placeOutside;
+        private final boolean randomOrientation;
+        private final int fixedOrientationOffset;
 
-        private PropDefinition(int modelId, int orientationOffset)
+        private PropDefinition(int[] modelIds, boolean repeatPerEdge, boolean placeOutside, boolean randomOrientation, int fixedOrientationOffset)
         {
-            this.modelId = modelId;
-            this.orientationOffset = orientationOffset;
+            this.modelIds = modelIds;
+            this.repeatPerEdge = repeatPerEdge;
+            this.placeOutside = placeOutside;
+            this.randomOrientation = randomOrientation;
+            this.fixedOrientationOffset = fixedOrientationOffset;
         }
 
-        int getModelId()
+        static PropDefinition fixed(int modelId, boolean repeatPerEdge, boolean placeOutside)
         {
-            return modelId;
+            return new PropDefinition(new int[]{modelId}, repeatPerEdge, placeOutside, false, 0);
         }
 
-        int getOrientationOffset()
+        static PropDefinition randomized(int[] modelIds, boolean repeatPerEdge, boolean placeOutside, boolean randomOrientation)
         {
-            return orientationOffset;
+            return new PropDefinition(modelIds, repeatPerEdge, placeOutside, randomOrientation, 0);
+        }
+
+        int resolveModelId(WorldPoint point)
+        {
+            if (modelIds.length == 1)
+            {
+                return modelIds[0];
+            }
+            long seed = computeSeed(point, 0x9E3779B97F4A7C15L);
+            java.util.Random rng = new java.util.Random(seed);
+            int idx = rng.nextInt(modelIds.length);
+            return modelIds[idx];
+        }
+
+        int resolveOrientationOffset(WorldPoint point)
+        {
+            if (!randomOrientation)
+            {
+                return fixedOrientationOffset;
+            }
+            long seed = computeSeed(point, 0xC2B2AE3D27D4EB4FL);
+            java.util.Random rng = new java.util.Random(seed);
+            int spin = rng.nextInt(4); // 0,1,2,3 -> 0/512/1024/1536
+            return (spin * 512) % 2048;
+        }
+
+        boolean isRepeatPerEdge()
+        {
+            return repeatPerEdge;
+        }
+
+        boolean isPlaceOutside()
+        {
+            return placeOutside;
+        }
+
+        private static long computeSeed(WorldPoint point, long salt)
+        {
+            return ((long) point.getX() * 73856093L)
+                ^ ((long) point.getY() * 19349663L)
+                ^ ((long) point.getPlane() * 83492791L)
+                ^ salt;
         }
     }
 
