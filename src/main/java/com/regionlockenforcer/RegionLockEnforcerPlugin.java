@@ -1270,7 +1270,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         // Block ALL clicks outside the bordered region (only when inner tiles are computed)
         // Only block within normal surface map bounds (excludes underground, instances, upper/lower floors)
         // Only block game world actions (WALK, GAME_OBJECT, GROUND_ITEM, NPC, etc.), not UI actions, player interactions, or "Walk here" on players
-        if (wp != null && currentRegion != null && !currentRegion.getAllInnerTiles().isEmpty())
+        if (config.blockClicksOutsideBorder() && wp != null && currentRegion != null && !currentRegion.getAllInnerTiles().isEmpty())
         {
             // Only apply click blocking within normal surface map bounds
             if (isWithinSurfaceBounds(wp))
@@ -1402,7 +1402,7 @@ public class RegionLockEnforcerPlugin extends Plugin
         // Remove ALL menu entries for tiles outside the border (only when inner tiles are computed)
         // Only filter within normal surface map bounds (excludes underground, instances, upper/lower floors)
         // Whitelist approach: filter everything, then explicitly allow only UI actions, player interactions, and "Walk here" on players
-        if (hoveredWp != null && !editor.editing && currentRegion != null && !currentRegion.getAllInnerTiles().isEmpty())
+        if (config.blockClicksOutsideBorder() && hoveredWp != null && !editor.editing && currentRegion != null && !currentRegion.getAllInnerTiles().isEmpty())
         {
             // Only apply menu filtering within normal surface map bounds
             if (isWithinSurfaceBounds(hoveredWp))
@@ -1459,7 +1459,9 @@ public class RegionLockEnforcerPlugin extends Plugin
                 // If no border exists, create one and enable editing
                 else if (border == null)
                 {
-                    createRegion(null); // Will auto-generate name
+                    Region region = currentRegion != null ? currentRegion : createRegion(null); // auto-generate if needed
+                    Border newBorder = createBorder(region, null);
+                    selectBorder(newBorder);
                     editing = true;
                 }
             }

@@ -645,11 +645,6 @@ public class RegionConfigComponent extends JPanel
             if (!exists)
             {
                 Region newProfile = plugin.createRegion(trimmedName);
-                // Automatically enable editing mode for the new profile
-                if (newProfile != null)
-                {
-                    plugin.setEditing(true);
-                }
                 refreshRegionList();
                 refreshBorderList();
             }
