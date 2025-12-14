@@ -86,6 +86,9 @@ public class TeleportRegistry
         // Giantsoul amulet teleports
         addTeleportCategory("Giantsoul amulet", createGiantsoulAmuletTeleports());
         
+        // Sailors' amulet teleports
+        addTeleportCategory("Sailors' amulet", createSailorsAmuletTeleports());
+        
         // Xeric's talisman teleports
         addTeleportCategory("Xeric's talisman", createXericsTalismanTeleports());
         
@@ -688,6 +691,24 @@ public class TeleportRegistry
     }
     
     /**
+     * Create Sailors' amulet teleport definitions.
+     */
+    private List<TeleportDefinition> createSailorsAmuletTeleports()
+    {
+        List<TeleportDefinition> teleports = new ArrayList<>();
+        
+        // Sailors' amulet teleports
+        teleports.add(createTeleport("sailors_amulet_pandemonium", "The Pandemonium", "Sailors' amulet", 
+            TeleportType.ITEM, "Teleport", "Sailors' amulet", null, null, null, null));
+        teleports.add(createTeleport("sailors_amulet_port_roberts", "Port Roberts", "Sailors' amulet", 
+            TeleportType.ITEM, "Teleport", "Sailors' amulet", null, null, null, null));
+        teleports.add(createTeleport("sailors_amulet_deepfin_point", "Deepfin Point", "Sailors' amulet", 
+            TeleportType.ITEM, "Teleport", "Sailors' amulet", null, null, null, null));
+        
+        return teleports;
+    }
+    
+    /**
      * Create Xeric's talisman teleport definitions.
      */
     private List<TeleportDefinition> createXericsTalismanTeleports()
@@ -865,6 +886,7 @@ public class TeleportRegistry
             category.equals("Burning amulet") ||
             category.equals("Ring of returning") ||
             category.equals("Giantsoul amulet") ||
+            category.equals("Sailors' amulet") ||
             category.equals("Xeric's talisman") ||
             category.equals("Ring of the elements") ||
             category.equals("Pendant of ates"))
