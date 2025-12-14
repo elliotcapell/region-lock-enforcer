@@ -1397,9 +1397,8 @@ public class RegionConfigComponent extends JPanel
                             
                             applyTeleportSelectionStyles(teleportCheckBox);
                             updateTeleportCountLabel(currentProfile, visibleTeleports, categoryCountLabel);
-                            plugin.saveRegions();
-                            // Redraw spellbook to apply changes immediately
-                            plugin.redrawSpellbook();
+                            // Persist whitelist changes off the EDT and redraw afterward
+                            plugin.persistWhitelistAsync();
                         });
                         
                         teleportItemPanel.add(teleportCheckBox, BorderLayout.WEST);

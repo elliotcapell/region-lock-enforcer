@@ -212,8 +212,8 @@ public class TeleportRegistry
             TeleportType.SPELL, "Cast", "Trollheim Teleport", null, null, null, null));
         teleports.add(createTeleport("spell_ape_atoll", "Ape Atoll Teleport", "Standard Spellbook", 
             TeleportType.SPELL, "Cast", "Ape Atoll Teleport", null, null, null, null));
-        teleports.add(createTeleport("spell_teleport_me_to_boat", "Teleport me to Boat", "Standard Spellbook", 
-            TeleportType.SPELL, "Cast", "Teleport me to Boat", null, null, null, null));
+        teleports.add(createTeleport("spell_teleport_me_to_boat", "Teleport to Boat", "Standard Spellbook", 
+            TeleportType.SPELL, "Cast", "Teleport to Boat", null, null, null, null));
         teleports.add(createTeleport("spell_teleport_to_target", "Teleport to Target", "Standard Spellbook", 
             TeleportType.SPELL, "Cast", "Teleport to Target", null, null, null, null));
         

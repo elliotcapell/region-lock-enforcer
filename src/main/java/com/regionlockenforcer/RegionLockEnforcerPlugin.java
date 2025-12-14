@@ -7,6 +7,8 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import lombok.Getter;
@@ -85,6 +87,13 @@ public class RegionLockEnforcerPlugin extends Plugin
     
     // World map mouse listener reference for cleanup
     private java.awt.event.MouseListener worldMapMouseListener;
+
+    // Background executor for non-EDT work (saves/redraw coordination)
+    private final ExecutorService backgroundExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "region-lock-bg");
+        t.setDaemon(true);
+        return t;
+    });
 
     @Override protected void startUp()
     {
@@ -1764,6 +1773,17 @@ public class RegionLockEnforcerPlugin extends Plugin
         {
             currentBorder = null;
         }
+
+        // Apply whitelist overrides if present (lighter-weight saves can store just the whitelist)
+        for (Region region : regions)
+        {
+            String whitelistKey = whitelistConfigKey(region.getName());
+            String whitelistStr = configManager.getConfiguration(RegionLockEnforcerConfig.GROUP, whitelistKey);
+            if (whitelistStr != null)
+            {
+                region.setTeleportWhitelist(RegionSerializer.deserializeStrings(whitelistStr));
+            }
+        }
     }
 
     /**
@@ -1779,6 +1799,49 @@ public class RegionLockEnforcerPlugin extends Plugin
             "selectedRegion",
             currentRegion != null ? currentRegion.getName() : ""
         );
+    }
+
+    /**
+     * Persist only the current region's teleport whitelist on a background thread,
+     * avoiding full region serialization and keeping the EDT free.
+     */
+    public void persistWhitelistAsync()
+    {
+        Region region = currentRegion;
+        if (region == null)
+        {
+            return;
+        }
+
+        String regionName = region.getName() != null ? region.getName() : "";
+        Set<String> whitelistSnapshot = new HashSet<>(region.getTeleportWhitelist());
+        String whitelistKey = whitelistConfigKey(regionName);
+
+        backgroundExecutor.submit(() ->
+        {
+            try
+            {
+                String serialized = RegionSerializer.serializeStrings(whitelistSnapshot);
+                configManager.setConfiguration(RegionLockEnforcerConfig.GROUP, whitelistKey, serialized);
+                // Keep selection in sync without touching heavy region serialization
+                configManager.setConfiguration(RegionLockEnforcerConfig.GROUP, "selectedRegion", regionName);
+            }
+            catch (Exception ex)
+            {
+                log.warn("Failed to persist whitelist asynchronously for region {}", regionName, ex);
+            }
+            finally
+            {
+                // Redraw after persistence so the client reflects the latest whitelist
+                redrawSpellbook();
+            }
+        });
+    }
+
+    private String whitelistConfigKey(String regionName)
+    {
+        String safeName = regionName != null ? regionName.replaceAll("[^A-Za-z0-9_-]", "_") : "region";
+        return "whitelist_" + safeName;
     }
 
 
