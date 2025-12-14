@@ -2161,6 +2161,8 @@ public class RegionLockEnforcerPlugin extends Plugin
         }
         saveRegions();
         notifyRegionsChanged();
+        // Region change affects teleport whitelist; refresh client view (spellbook, etc.)
+        redrawSpellbook();
     }
 
     /**
